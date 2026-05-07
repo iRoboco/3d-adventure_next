@@ -119,7 +119,7 @@ bool MainScene::init() {
     //     "textures/top.png", "textures/bottom.png"
     // };
 
-    // Cube3D* cube = Cube3D::create(meshFile, textureFiles, 64.0f);
+    // Cube3D* cube = Cube3D::create(textureFiles, 64.0f);
     // if (cube) {
     //     // Устанавливаем позицию куба и добавляем его на сцену
     //     cube->setPosition3D(Vec3(0, 400, 0));

@@ -13,22 +13,19 @@ public:
     /**
      * @brief Создаёт экземпляр Cube3D.
      * 
-     * @param meshFile Путь к файлу меша (обычно .obj или аналогичный формат).
      * @param textureFiles Массив из 6 путей к текстурам для каждой грани куба.
      *        Порядок: Front, Back, Left, Right, Top, Bottom.
      * @param cubeSize Размер куба (по умолчанию 1.0f).
      * @return Указатель на созданный объект Cube3D или nullptr в случае ошибки.
      *
-     * @note Объект создаётся с помощью create(), как принято в Axmol.
+     * @note Объект создаётся с помощью create(), как принято в Axmol. Геометрия куба
+     *       создаётся программно, без загрузки из файла.
      */
-    static Cube3D* create(const std::string& meshFile,
-        const std::array<std::string, 6>& textureFiles,
-        float cubeSize = 1.0f);
+    static Cube3D* create(const std::array<std::string, 6>& textureFiles, float cubeSize = 1.0f);
 
     /**
      * @brief Инициализирует объект Cube3D.
      * 
-     * @param meshFile Путь к файлу меша.
      * @param textureFiles Массив из 6 путей к текстурам для каждой грани куба.
      *        Порядок: Front, Back, Left, Right, Top, Bottom.
      * @param cubeSize Размер куба.
@@ -36,9 +33,7 @@ public:
      *
      * @note Обычно вызывается внутри create().
      */
-    virtual bool init(const std::string& meshFile,
-        const std::array<std::string, 6>& textureFiles,
-        float cubeSize);
+    virtual bool init(const std::array<std::string, 6>& textureFiles, float cubeSize);
 
 protected:
     /**
@@ -50,4 +45,13 @@ protected:
      * @brief Виртуальный защищённый деструктор.
      */
     virtual ~Cube3D() = default;
+
+private:
+    /**
+     * @brief Создаёт программный меш куба.
+     * 
+     * @param size Размер куба.
+     * @return Указатель на созданный объект Mesh.
+     */
+    static ax::Mesh* createCubeMesh(float size);
 };
