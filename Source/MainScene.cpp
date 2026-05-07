@@ -111,15 +111,13 @@ bool MainScene::init() {
     //
     // Создаем куб из плоских мешей и 6ти разных текстур
     //
-    // std::string meshFile = { "models/plane.obj"s }; // Плоский меш
-
     // std::array<std::string, 6> textureFiles = {
     //     "textures/front.png", "textures/back.png",
     //     "textures/left.png", "textures/right.png",
     //     "textures/top.png", "textures/bottom.png"
     // };
 
-    // Cube3D* cube = Cube3D::create(meshFile, textureFiles, 64.0f);
+    // Cube3D* cube = Cube3D::create("models/plane.obj", textureFiles, 64.0f);
     // if (cube) {
     //     // Устанавливаем позицию куба и добавляем его на сцену
     //     cube->setPosition3D(Vec3(0, 400, 0));

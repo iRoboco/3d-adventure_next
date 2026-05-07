@@ -6,14 +6,14 @@
  * @brief 3D-куб с индивидуальными текстурами для каждой грани.
  *
  * Класс Cube3D наследуется от ax::Node и предоставляет возможность создания 3D-куба,
- * каждая грань которого может иметь свою текстуру.
+ * каждая грань которого может иметь свою текстуру. Геометрия куба создается программно.
  */
 class Cube3D : public ax::Node {
 public:
     /**
      * @brief Создаёт экземпляр Cube3D.
      * 
-     * @param meshFile Путь к файлу меша (обычно .obj или аналогичный формат).
+     * @param meshFile Путь к файлу меша (не используется, геометрия создается программно).
      * @param textureFiles Массив из 6 путей к текстурам для каждой грани куба.
      *        Порядок: Front, Back, Left, Right, Top, Bottom.
      * @param cubeSize Размер куба (по умолчанию 1.0f).
@@ -28,7 +28,6 @@ public:
     /**
      * @brief Инициализирует объект Cube3D.
      * 
-     * @param meshFile Путь к файлу меша.
      * @param textureFiles Массив из 6 путей к текстурам для каждой грани куба.
      *        Порядок: Front, Back, Left, Right, Top, Bottom.
      * @param cubeSize Размер куба.
@@ -36,8 +35,7 @@ public:
      *
      * @note Обычно вызывается внутри create().
      */
-    virtual bool init(const std::string& meshFile,
-        const std::array<std::string, 6>& textureFiles,
+    virtual bool init(const std::array<std::string, 6>& textureFiles,
         float cubeSize);
 
 protected:
