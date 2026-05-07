@@ -196,8 +196,13 @@ void MainScene::createCubeTerrain(float cubeSize, float spacing) {
 
             // Создаем столбец кубов для текущей позиции
             for (int yLevel = 0; yLevel < height; yLevel++) {
-                // Создаем куб с физикой
-                auto cubeMesh = ax::PhysicsMeshRenderer::create("models/cube.obj"sv, &staticRigidDes);
+                // Создаем куб с физикой используя программный меш
+                auto cubeMesh = createPhysicsCube(&staticRigidDes, cubeSize / 2.0f);
+                
+                if (!cubeMesh) {
+                    AXLOGE("Не удалось создать программный куб");
+                    continue;
+                }
                 
                 // Выбираем текстуру в зависимости от высоты
                 if (yLevel == height - 1) {
@@ -211,10 +216,15 @@ void MainScene::createCubeTerrain(float cubeSize, float spacing) {
                     cubeMesh->setTexture("textures/grass.png"sv);
                 }
 
+                // Включаем отсечение задних граней для оптимизации рендеринга
+                for (auto& mesh : cubeMesh->getMeshes()) {
+                    mesh->getMaterial()->getStateBlock().setCullFace(true);
+                    mesh->getMaterial()->getStateBlock().setCullFaceSide(ax::backend::CullMode::BACK);
+                }
+
                 // Устанавливаем позицию куба
                 float posY = baseY + yLevel * cubeSize;
                 cubeMesh->setPosition3D(Vec3(posX, posY, posZ));
-                cubeMesh->setScale(cubeSize / 2);
                 cubeMesh->getPhysicsObj()->setMask(1000);
 
                 // Добавляем куб на платформу
