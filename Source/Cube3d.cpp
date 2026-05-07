@@ -112,15 +112,16 @@ bool Cube3D::init(const std::array<std::string, 6>& textureFiles, float cubeSize
         return false;
     }
 
-    // Устанавливаем меш
-    meshRenderer->setMesh(cubeMesh);
+    // Добавляем меш в MeshRenderer
+    meshRenderer->addMesh(cubeMesh);
     
     // Для упрощения назначаем первую текстуру на все грани
     // В реальном проекте можно использовать AtlasTexture или разные материалы для каждой грани
     meshRenderer->setTexture(textureFiles[0]);
     
     // Включаем отсечение задних граней для оптимизации отрисовки
-    meshRenderer->getMaterial(0)->setCullFace(backend::CullFace::BACK);
+    meshRenderer->setCullFaceEnabled(true);
+    meshRenderer->setCullFace(backend::CullMode::BACK);
     
     this->addChild(meshRenderer);
 

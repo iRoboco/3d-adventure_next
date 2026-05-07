@@ -5,6 +5,110 @@
 
 using namespace ax;
 
+// Вспомогательная функция для создания физического куба с программным мешем
+static PhysicsMeshRenderer* createPhysicsCube(float cubeSize, Physics3DRigidBodyDes* rigidDes) {
+    // Создаем программный меш куба
+    float h = cubeSize / 2.0f; // половина размера для координат от -h до +h
+    
+    // Вершины куба (24 вершины для 6 граней с отдельными UV и нормалями)
+    std::vector<float> positions = {
+        // Front face (z = +h)
+        -h, -h,  h,   h, -h,  h,   h,  h,  h,  -h,  h,  h,
+        // Back face (z = -h)
+         h, -h, -h,  -h, -h, -h,  -h,  h, -h,   h,  h, -h,
+        // Top face (y = +h)
+        -h,  h,  h,   h,  h,  h,   h,  h, -h,  -h,  h, -h,
+        // Bottom face (y = -h)
+        -h, -h, -h,   h, -h, -h,   h, -h,  h,  -h, -h,  h,
+        // Right face (x = +h)
+         h, -h,  h,   h, -h, -h,   h,  h, -h,   h,  h,  h,
+        // Left face (x = -h)
+        -h, -h, -h,  -h, -h,  h,  -h,  h,  h,  -h,  h, -h
+    };
+    
+    // Нормали для каждой грани
+    std::vector<float> normals = {
+        // Front face (z = +h)
+        0, 0, 1,   0, 0, 1,   0, 0, 1,   0, 0, 1,
+        // Back face (z = -h)
+        0, 0, -1,  0, 0, -1,  0, 0, -1,  0, 0, -1,
+        // Top face (y = +h)
+        0, 1, 0,   0, 1, 0,   0, 1, 0,   0, 1, 0,
+        // Bottom face (y = -h)
+        0, -1, 0,  0, -1, 0,  0, -1, 0,  0, -1, 0,
+        // Right face (x = +h)
+        1, 0, 0,   1, 0, 0,   1, 0, 0,   1, 0, 0,
+        // Left face (x = -h)
+        -1, 0, 0,  -1, 0, 0,  -1, 0, 0,  -1, 0, 0
+    };
+    
+    // UV координаты для каждой грани
+    std::vector<float> texCoords = {
+        // Front face
+        0, 0,   1, 0,   1, 1,   0, 1,
+        // Back face
+        0, 0,   1, 0,   1, 1,   0, 1,
+        // Top face
+        0, 0,   1, 0,   1, 1,   0, 1,
+        // Bottom face
+        0, 0,   1, 0,   1, 1,   0, 1,
+        // Right face
+        0, 0,   1, 0,   1, 1,   0, 1,
+        // Left face
+        0, 0,   1, 0,   1, 1,   0, 1
+    };
+    
+    // Индексы для 6 граней (каждая грань - 2 треугольника = 6 индексов)
+    IndexArray indices(backend::IndexFormat::U_SHORT);
+    // Front face
+    indices.emplace_back<uint16_t>(0); indices.emplace_back<uint16_t>(1); indices.emplace_back<uint16_t>(2);
+    indices.emplace_back<uint16_t>(0); indices.emplace_back<uint16_t>(2); indices.emplace_back<uint16_t>(3);
+    // Back face
+    indices.emplace_back<uint16_t>(4); indices.emplace_back<uint16_t>(5); indices.emplace_back<uint16_t>(6);
+    indices.emplace_back<uint16_t>(4); indices.emplace_back<uint16_t>(6); indices.emplace_back<uint16_t>(7);
+    // Top face
+    indices.emplace_back<uint16_t>(8); indices.emplace_back<uint16_t>(9); indices.emplace_back<uint16_t>(10);
+    indices.emplace_back<uint16_t>(8); indices.emplace_back<uint16_t>(10); indices.emplace_back<uint16_t>(11);
+    // Bottom face
+    indices.emplace_back<uint16_t>(12); indices.emplace_back<uint16_t>(13); indices.emplace_back<uint16_t>(14);
+    indices.emplace_back<uint16_t>(12); indices.emplace_back<uint16_t>(14); indices.emplace_back<uint16_t>(15);
+    // Right face
+    indices.emplace_back<uint16_t>(16); indices.emplace_back<uint16_t>(17); indices.emplace_back<uint16_t>(18);
+    indices.emplace_back<uint16_t>(16); indices.emplace_back<uint16_t>(18); indices.emplace_back<uint16_t>(19);
+    // Left face
+    indices.emplace_back<uint16_t>(20); indices.emplace_back<uint16_t>(21); indices.emplace_back<uint16_t>(22);
+    indices.emplace_back<uint16_t>(20); indices.emplace_back<uint16_t>(22); indices.emplace_back<uint16_t>(23);
+    
+    Mesh* cubeMesh = Mesh::create(positions, normals, texCoords, indices);
+    if (!cubeMesh) {
+        return nullptr;
+    }
+    
+    // Создаем MeshRenderer и добавляем меш
+    auto meshRenderer = MeshRenderer::create();
+    if (!meshRenderer) {
+        return nullptr;
+    }
+    
+    meshRenderer->addMesh(cubeMesh);
+    
+    // Создаем компонент физики
+    auto rigidBody = Physics3DRigidBody::create(rigidDes);
+    if (!rigidBody) {
+        return nullptr;
+    }
+    
+    auto physicsComponent = Physics3DComponent::create(rigidBody);
+    if (!physicsComponent) {
+        return nullptr;
+    }
+    
+    meshRenderer->addComponent(physicsComponent);
+    
+    // Возвращаем как PhysicsMeshRenderer через приведение типа
+    return static_cast<PhysicsMeshRenderer*>(meshRenderer);
+}
+
 static int s_sceneID = 1000;
 
 bool MainScene::init() {
@@ -197,7 +301,7 @@ void MainScene::createCubeTerrain(float cubeSize, float spacing) {
             // Создаем столбец кубов для текущей позиции
             for (int yLevel = 0; yLevel < height; yLevel++) {
                 // Создаем куб с физикой используя программный меш
-                auto cubeMesh = createPhysicsCube(&staticRigidDes, cubeSize / 2.0f);
+                auto cubeMesh = createPhysicsCube(cubeSize, &staticRigidDes);
                 
                 if (!cubeMesh) {
                     AXLOGE("Не удалось создать программный куб");
@@ -217,10 +321,8 @@ void MainScene::createCubeTerrain(float cubeSize, float spacing) {
                 }
 
                 // Включаем отсечение задних граней для оптимизации рендеринга
-                for (auto& mesh : cubeMesh->getMeshes()) {
-                    mesh->getMaterial()->getStateBlock().setCullFace(true);
-                    mesh->getMaterial()->getStateBlock().setCullFaceSide(ax::backend::CullMode::BACK);
-                }
+                cubeMesh->setCullFaceEnabled(true);
+                cubeMesh->setCullFace(ax::backend::CullMode::BACK);
 
                 // Устанавливаем позицию куба
                 float posY = baseY + yLevel * cubeSize;
