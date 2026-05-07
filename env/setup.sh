@@ -13,4 +13,10 @@ tar -xzf axmol.tar.gz
 mv "$AXMOL_DIR" axmol
 rm axmol.tar.gz
 
+# Добавляем axmol в .gitignore если ещё не добавлен
+if ! grep -q "^axmol/$" .gitignore 2>/dev/null; then
+    echo "Adding axmol/ to .gitignore..."
+    echo "axmol/" >> .gitignore
+fi
+
 echo "Axmol ready at $(pwd)/axmol"
