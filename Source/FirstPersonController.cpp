@@ -345,7 +345,19 @@ void FirstPersonController::onMouseMove(ax::Event* event)
     if (!_enabled || !_camera) return;
     auto* e = static_cast<ax::EventMouse*>(event);
 
-    Vec2 delta(e->getDelta());
+
+    //Vec2 delta(e->getDelta()); FIX
+    // Вычисляем дельту вручную через текущие и предыдущие координаты курсора.
+    float currentX = e->getCursorX();
+    float currentY = e->getCursorY();
+
+    float deltaX = currentX - _lastMousePos.x;
+    float deltaY = currentY - _lastMousePos.y;
+
+    // Обновляем последнюю позицию курсора
+    _lastMousePos.set(currentX, currentY);
+
+    Vec2 delta(deltaX, deltaY);
 
     if (_freeFlightMode && !_isLeftMousePressed) return;
 
