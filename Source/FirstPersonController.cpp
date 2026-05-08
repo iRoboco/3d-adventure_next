@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <cmath>
 
+#if defined(GLFW_VERSION_MAJOR)
+#include <GLFW/glfw3.h>
+#endif
+
 USING_NS_AX;
 
 // =========================================================================
@@ -113,6 +117,16 @@ void FirstPersonController::setFreeFlightMode(bool enabled)
         _isLeftMousePressed = false;
     } else {
         glView->setCursorVisible(false);
+        // Захват мыши в режиме FPC - курсор фиксируется в центре окна
+        #if defined(GLFW_VERSION_MAJOR)
+        auto* glViewImpl = dynamic_cast<ax::RenderViewImpl*>(glView);
+        if (glViewImpl)
+        {
+            auto window = glViewImpl->getWindow();
+            if (window)
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        }
+        #endif
     }
 }
 
