@@ -361,8 +361,13 @@ void FirstPersonController::onMouseMove(ax::Event* event)
 
     if (_freeFlightMode && !_isLeftMousePressed) return;
 
-    float yaw   = _camera->getRotation3D().y + delta.x * _mouseSensitivity;
-    float pitch = _camera->getRotation3D().x - delta.y * _mouseSensitivity;
+    // Инвертируем управление для режима FPC
+    // В режиме полета: движение мыши влево → камера вправо, вверх → вниз
+    // В режиме FPC: движение мыши влево → камера влево, вверх → вверх
+    float directionMultiplier = _freeFlightMode ? 1.0f : -1.0f;
+
+    float yaw   = _camera->getRotation3D().y + delta.x * _mouseSensitivity * directionMultiplier;
+    float pitch = _camera->getRotation3D().x - delta.y * _mouseSensitivity * directionMultiplier;
 
     yaw = std::fmod(yaw, 360.0f);
     if (yaw > 180.0f)  yaw -= 360.0f;
