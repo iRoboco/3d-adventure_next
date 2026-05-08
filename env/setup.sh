@@ -3,24 +3,30 @@ set -e
 
 AXMOL_VERSION="2.11.3"
 AXMOL_URL="https://github.com/axmolengine/axmol/archive/refs/tags/v${AXMOL_VERSION}.tar.gz"
-AXMOL_DIR="axmol-${AXMOL_VERSION}"
+TMP_DIR="/tmp/axmol-download-$$"
 
-echo "Downloading Axmol ${AXMOL_VERSION}..."
+echo "Downloading Axmol ${AXMOL_VERSION} headers..."
+
+mkdir -p "$TMP_DIR"
+cd "$TMP_DIR"
+
 wget -q --show-progress "$AXMOL_URL" -O axmol.tar.gz
+tar -xzf axmol.tar.gz --wildcards "axmol-${AXMOL_VERSION}/core/**.h" "axmol-${AXMOL_VERSION}/core/**.hpp" "axmol-${AXMOL_VERSION}/extensions/**.h" "axmol-${AXMOL_VERSION}/extensions/**.hpp" 2>/dev/null || true
 
-echo "Extracting..."
-tar -xzf axmol.tar.gz
-mv "$AXMOL_DIR" axmol
-rm axmol.tar.gz
+# Копируем только заголовки в проект
+mkdir -p "$OLDPWD/axmol/include"
+cp -r "axmol-${AXMOL_VERSION}/core" "$OLDPWD/axmol/include/"
+cp -r "axmol-${AXMOL_VERSION}/extensions" "$OLDPWD/axmol/include/" 2>/dev/null || true
 
-# Создаём .gitignore если нет, добавляем axmol/
+cd "$OLDPWD"
+rm -rf "$TMP_DIR"
+
+# Добавляем в .gitignore
 if [ ! -f .gitignore ]; then
     touch .gitignore
 fi
-
 if ! grep -Fxq "axmol/" .gitignore; then
     echo "axmol/" >> .gitignore
-    echo "Added axmol/ to .gitignore"
 fi
 
 # Дополнительно: игнорируем всё содержимое axmol на всякий случай
@@ -32,4 +38,4 @@ fi
 
 git add .gitignore 2>/dev/null || true
 
-echo "Axmol ready at $(pwd)/axmol"
+echo "Axmol headers ready at $(pwd)/axmol/include"
