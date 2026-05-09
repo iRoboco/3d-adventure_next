@@ -33,6 +33,8 @@ protected:
 
 private:
     void update(float dt) override;
+    // Обработчик клавиатуры для перезапуска уровня
+    void onKeyPressed(ax::EventKeyboard::KeyCode keyCode, ax::Event* event);
 
     // Ядро генерации мира
     ChunkManager _chunkMgr;

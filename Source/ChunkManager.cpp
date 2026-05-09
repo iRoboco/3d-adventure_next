@@ -347,7 +347,6 @@ ax::Node* ChunkManager::buildChunkVisualNode(const ChunkKey& key, ChunkData& dat
         ax::MeshMaterial::MaterialType::UNLIT, false);
     if (material && _terrainAtlas)
     {
-        // MeshMaterial::setTexture(Texture2D*, NTextureData::Usage) — реальный API
         material->setTexture(_terrainAtlas, ax::NTextureData::Usage::Diffuse);
     }
     chunkNode->setMaterial(material);

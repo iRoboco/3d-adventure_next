@@ -78,7 +78,23 @@ bool GameScene::init()
                 float biome   = perlin.octave2D_01(wx * 0.005, wz * 0.005, 4) * 15.0f - 5.0f;
                 int surfaceY = std::clamp(static_cast<int>(terrain + biome + 30), 1, CHUNK_SIZE_Y - 2);
                 for (int y = 0; y <= surfaceY; ++y) {
-                    BlockId block = (y == surfaceY) ? 1 : (y > surfaceY - 4 ? 2 : 3);
+                    //BlockId block = (y == surfaceY) ? 1 : (y > surfaceY - 4 ? 2 : 3);
+                    BlockId block;
+                    if (y == surfaceY)
+                    {
+                        // Верхний слой — трава
+                        block = BLOCK_GRASS;
+                    }
+                    else if (y > surfaceY - 4)
+                    {
+                        // 4 слоя под травой — земля
+                        block = BLOCK_DIRT;
+                    }
+                    else
+                    {
+                        // Глубже — камень
+                        block = BLOCK_STONE;
+                    }
                     chunk.setBlock(x, y, z, block);
                 }
             }
@@ -108,6 +124,12 @@ bool GameScene::init()
     this->addChild(_playerController);
 
     _playerNode = _playerController;
+
+
+    // Включаем обработку клавиатуры для перезапуска уровня
+    auto listener          = ax::EventListenerKeyboard::create();
+    listener->onKeyPressed = AX_CALLBACK_2(GameScene::onKeyPressed, this);
+    _eventDispatcher->addEventListenerWithSceneGraphPriority(listener, this);
 
     scheduleUpdate();
     return true;
@@ -161,5 +183,18 @@ void GameScene::update(float dt)
 ax::Vec3 GameScene::getPlayerPosition() const
 {
     return _playerNode ? _playerNode->getPosition3D() : ax::Vec3::ZERO;
+}
+
+// =========================================================================
+//  onKeyPressed — обработка нажатия F12 для перезапуска уровня
+// =========================================================================
+void GameScene::onKeyPressed(ax::EventKeyboard::KeyCode keyCode, ax::Event* event)
+{
+    // Перезапуск уровня по нажатию F12
+    if (keyCode == ax::EventKeyboard::KeyCode::KEY_F12)
+    {
+        auto scene = GameScene::create();
+        ax::Director::getInstance()->replaceScene(scene);
+    }
 }
 

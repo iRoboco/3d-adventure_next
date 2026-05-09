@@ -68,10 +68,11 @@ struct ChunkVertex
  * 
  * @note Функция inline — компилируется в месте вызова, нулевые накладные расходы.
  */
-inline std::array<float, 4> calculateBlockUV(uint16_t blockId, int atlasSize = 16)
+inline std::array<float, 4> calculateBlockUV(uint16_t blockId, int atlasSize = 4)
 {
     // Защита от деления на 0 и корректная обработка воздуха
-    uint16_t idx = (blockId == 0) ? 0 : (blockId % 256);
+    uint16_t idx = (blockId == 0 || blockId >= 256) ? 0 : blockId;
+    //uint16_t idx = (blockId == 0) ? 0 : (blockId % 256);
     
     // Расчёт границ тайла в нормированном пространстве [0.0, 1.0]
     float tileU = (idx % atlasSize) / static_cast<float>(atlasSize);

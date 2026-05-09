@@ -92,7 +92,10 @@ struct ChunkKey
 /// @brief Идентификатор блока — компактное хранение типа вокселя
 using BlockId = uint16_t;
 
-static constexpr BlockId BLOCK_AIR = 0; ///< Идентификатор пустого блока (воздух)
+static constexpr BlockId BLOCK_AIR   = 0;  ///< Пустой блок (воздух)
+static constexpr BlockId BLOCK_GRASS = 1;  ///< Блок травы (верхний слой земли)
+static constexpr BlockId BLOCK_STONE = 2;  ///< Каменный блок
+static constexpr BlockId BLOCK_DIRT  = 3;  ///< Блок земли
 
 /// @name Размеры чанка в блоках
 /// @{
