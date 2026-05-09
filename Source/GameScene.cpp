@@ -132,6 +132,12 @@ bool GameScene::init()
     _eventDispatcher->addEventListenerWithSceneGraphPriority(listener, this);
 
     scheduleUpdate();
+
+    // 🔧 FIX: Сбрасываем _lastPlayerChunk чтобы чанки начали грузиться сразу,
+    // а не после первого движения игрока (нажатия клавиши).
+    // Вызываем ПОСЛЕ scheduleUpdate() чтобы update() сработал с правильным флагом.
+    _chunkMgr.forceUpdate();
+
     return true;
 }
 
