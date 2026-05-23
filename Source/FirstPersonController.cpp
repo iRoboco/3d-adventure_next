@@ -349,8 +349,10 @@ void FirstPersonController::onMouseDown(ax::Event* event)
     // ЛКМ — ломать блок (всегда, не только в freeFlight)
     if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_LEFT)
     {
+        // Переключаем режим на разрушение перед действием
         if (_raycaster)
         {
+            _raycaster->setInteractionMode(VoxelRay::InteractionMode::Breaking);
             _raycaster->breakBlock();
         }
 
@@ -364,8 +366,10 @@ void FirstPersonController::onMouseDown(ax::Event* event)
     // ПКМ — ставить блок
     else if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_RIGHT)
     {
+        // Переключаем режим на установку перед действием
         if (_raycaster)
         {
+            _raycaster->setInteractionMode(VoxelRay::InteractionMode::Placing);
             _raycaster->placeBlock(BLOCK_STONE);
         }
     }
@@ -375,8 +379,23 @@ void FirstPersonController::onMouseUp(ax::Event* event)
 {
     if (!_enabled) return;
     auto* e = static_cast<ax::EventMouse*>(event);
-    if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_LEFT) {
+    if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_LEFT) 
+    {
         _isLeftMousePressed = false;
+        
+        // Сбрасываем режим взаимодействия при отпускании ЛКМ
+        if (_raycaster)
+        {
+            _raycaster->setInteractionMode(VoxelRay::InteractionMode::None);
+        }
+    }
+    else if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_RIGHT)
+    {
+        // Сбрасываем режим взаимодействия при отпускании ПКМ
+        if (_raycaster)
+        {
+            _raycaster->setInteractionMode(VoxelRay::InteractionMode::None);
+        }
     }
 }
 

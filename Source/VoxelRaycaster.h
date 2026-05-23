@@ -66,6 +66,17 @@ struct VoxelHit
 namespace VoxelRay
 {
 
+// ============================================================================
+//  InteractionMode — режимы взаимодействия для подсветки
+// ============================================================================
+
+enum class InteractionMode : uint8_t
+{
+    None     = 0,  // Просто прицеливание: показываем только wireframe грани
+    Breaking = 1,  // ЛКМ зажата: яркая подсветка грани (красный)
+    Placing  = 2   // ПКМ зажата: показываем preview куб (зелёный)
+};
+
 namespace detail
 {
 inline double safe_inv(double v) noexcept
@@ -258,6 +269,10 @@ public:
     void setMaxDistance(float d) noexcept { _maxDist = d; }
     float getMaxDistance() const noexcept { return _maxDist; }
 
+    // Установка режима взаимодействия (влияет на подсветку)
+    void setInteractionMode(InteractionMode mode) noexcept;
+    InteractionMode getInteractionMode() const noexcept { return _interactionMode; }
+
     // Цвет подсветки грани (tint меша)
     void setFaceHighlightColor(const ax::Color4F& c) noexcept { _faceColor = c; }
 
@@ -301,14 +316,18 @@ private:
 
     std::optional<VoxelHit> _lastHit;
 
+    // Режим взаимодействия (влияет на подсветку)
+    InteractionMode _interactionMode = InteractionMode::None;
+
     // MeshRenderer для подсветки (переиспользуем существующий 3D pipeline)
-    ax::MeshRenderer* _faceHighlightRenderer = nullptr;  // Полупрозрачная грань
+    ax::MeshRenderer* _faceHighlightRenderer = nullptr;  // Полупрозрачная грань / wireframe
     ax::MeshRenderer* _placePreviewRenderer  = nullptr;  // Preview блока
 
     bool _previewVisible = true;
 
-    ax::Color4F _faceColor{1.0f, 1.0f, 1.0f, 0.25f};
-    ax::Color4F _previewColor{0.2f, 0.9f, 0.2f, 0.2f};
+    ax::Color4F _faceColor{1.0f, 1.0f, 1.0f, 0.25f};     // Белый для прицеливания
+    ax::Color4F _breakColor{1.0f, 0.3f, 0.2f, 0.6f};     // Красный для разрушения
+    ax::Color4F _previewColor{0.2f, 0.9f, 0.2f, 0.2f};   // Зелёный для установки
 
     // Кэш текстуры атласа (берём из ChunkManager или создаём fallback)
     ax::Texture2D* _terrainAtlas = nullptr;

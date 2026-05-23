@@ -97,6 +97,21 @@ void VoxelRaycasterNode::update(float /*dt*/)
 }
 
 // ============================================================================
+//  setInteractionMode / getInteractionMode
+// ============================================================================
+
+void VoxelRaycasterNode::setInteractionMode(InteractionMode mode) noexcept
+{
+    _interactionMode = mode;
+    
+    // Перестраиваем подсветку при смене режима
+    if (_lastHit.has_value())
+    {
+        rebuildHighlight(*_lastHit);
+    }
+}
+
+// ============================================================================
 //  createSingleBlockMesh — ядро ВАРИАНТА 4
 // ============================================================================
 //
@@ -205,7 +220,7 @@ ax::Mesh* VoxelRaycasterNode::createFaceWireMesh(const VoxelHit& hit)
 }
 
 // ============================================================================
-//  rebuildHighlight — сборка MeshRenderer'ов
+//  rebuildHighlight — сборка MeshRenderer'ов с учётом InteractionMode
 // ============================================================================
 
 void VoxelRaycasterNode::rebuildHighlight(const VoxelHit& hit)
@@ -213,67 +228,99 @@ void VoxelRaycasterNode::rebuildHighlight(const VoxelHit& hit)
     // Удаляем старые renderer'ы
     hideHighlight();
 
-    // === Подсветка грани (ВАРИАНТ 4: прозрачный tinted блок) ===
-    if (auto* mesh = createFaceHighlightMesh(hit))
+    // === Логика подсветки в зависимости от режима ===
+    
+    switch (_interactionMode)
     {
-        _faceHighlightRenderer = MeshRenderer::create();
-        _faceHighlightRenderer->addMesh(mesh);
-        _faceHighlightRenderer->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
-
-        // Материал: UNLIT с прозрачностью + tint цветом
-        auto* material = MeshMaterial::createBuiltInMaterial(MeshMaterial::MaterialType::UNLIT, false);
-        if (material)
-        {
-            // Настройка прозрачности через BlendFunc
-            BlendFunc blend;
-            blend.src = backend::BlendFactor::SRC_ALPHA;
-            blend.dst = backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
-            material->setStateBlock(material->getStateBlock());
-            material->getStateBlock().setBlendFunc(blend);
-            material->getStateBlock().setDepthWrite(false);  // Прозрачные объекты не пишут в depth
-
-            // Применяем tint цветом через setColor (Color3B) и setOpacity для альфа-канала
-            _faceHighlightRenderer->setColor(ax::Color3B(static_cast<uint8_t>(_faceColor.r * 255),
-                                                         static_cast<uint8_t>(_faceColor.g * 255),
-                                                         static_cast<uint8_t>(_faceColor.b * 255)));
-            _faceHighlightRenderer->setOpacity(static_cast<uint8_t>(_faceColor.a * 255));
-        }
-        _faceHighlightRenderer->setMaterial(material);
-
-        // ВАРИАНТ 2: включаем wireframe для контурного эффекта
-        // _faceHighlightRenderer->setWireframe(true); // Раскомментировать для wireframe-only
-
-        this->addChild(_faceHighlightRenderer);
-    }
-
-    // === Preview блока для установки ===
-    if (_previewVisible)
-    {
-        if (auto* mesh = createPlacePreviewMesh(hit))
-        {
-            _placePreviewRenderer = MeshRenderer::create();
-            _placePreviewRenderer->addMesh(mesh);
-            _placePreviewRenderer->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
-
-            auto* material = MeshMaterial::createBuiltInMaterial(MeshMaterial::MaterialType::UNLIT, false);
-            if (material)
+        case InteractionMode::None:
+            // Прицеливание: только wireframe контур грани (белый)
+            if (auto* mesh = createFaceWireMesh(hit))
             {
-                BlendFunc blend;
-                blend.src = backend::BlendFactor::SRC_ALPHA;
-                blend.dst = backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
-                material->getStateBlock().setBlendFunc(blend);
-                material->getStateBlock().setDepthWrite(false);
+                _faceHighlightRenderer = MeshRenderer::create();
+                _faceHighlightRenderer->addMesh(mesh);
+                _faceHighlightRenderer->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
+                _faceHighlightRenderer->setWireframe(true);  // Wireframe режим
 
-                // Применяем tint цветом через setColor (Color3B) и setOpacity для альфа-канала
-                _placePreviewRenderer->setColor(ax::Color3B(static_cast<uint8_t>(_previewColor.r * 255),
-                                                            static_cast<uint8_t>(_previewColor.g * 255),
-                                                            static_cast<uint8_t>(_previewColor.b * 255)));
-                _placePreviewRenderer->setOpacity(static_cast<uint8_t>(_previewColor.a * 255));
+                auto* material = MeshMaterial::createBuiltInMaterial(MeshMaterial::MaterialType::UNLIT, false);
+                if (material)
+                {
+                    BlendFunc blend;
+                    blend.src = backend::BlendFactor::SRC_ALPHA;
+                    blend.dst = backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
+                    material->getStateBlock().setBlendFunc(blend);
+                    material->getStateBlock().setDepthWrite(false);
+
+                    _faceHighlightRenderer->setColor(ax::Color3B(
+                        static_cast<uint8_t>(_faceColor.r * 255),
+                        static_cast<uint8_t>(_faceColor.g * 255),
+                        static_cast<uint8_t>(_faceColor.b * 255)));
+                    _faceHighlightRenderer->setOpacity(static_cast<uint8_t>(_faceColor.a * 255));
+                }
+                _faceHighlightRenderer->setMaterial(material);
+                this->addChild(_faceHighlightRenderer);
             }
-            _placePreviewRenderer->setMaterial(material);
+            break;
 
-            this->addChild(_placePreviewRenderer);
-        }
+        case InteractionMode::Breaking:
+            // Разрушение: яркая полупрозрачная подсветка грани (красный)
+            if (auto* mesh = createFaceHighlightMesh(hit))
+            {
+                _faceHighlightRenderer = MeshRenderer::create();
+                _faceHighlightRenderer->addMesh(mesh);
+                _faceHighlightRenderer->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
+
+                auto* material = MeshMaterial::createBuiltInMaterial(MeshMaterial::MaterialType::UNLIT, false);
+                if (material)
+                {
+                    BlendFunc blend;
+                    blend.src = backend::BlendFactor::SRC_ALPHA;
+                    blend.dst = backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
+                    material->getStateBlock().setBlendFunc(blend);
+                    material->getStateBlock().setDepthWrite(false);
+
+                    _faceHighlightRenderer->setColor(ax::Color3B(
+                        static_cast<uint8_t>(_breakColor.r * 255),
+                        static_cast<uint8_t>(_breakColor.g * 255),
+                        static_cast<uint8_t>(_breakColor.b * 255)));
+                    _faceHighlightRenderer->setOpacity(static_cast<uint8_t>(_breakColor.a * 255));
+                }
+                _faceHighlightRenderer->setMaterial(material);
+                this->addChild(_faceHighlightRenderer);
+            }
+            // Preview НЕ показываем при разрушении
+            break;
+
+        case InteractionMode::Placing:
+            // Установка: показываем preview куб (зелёный), грань не подсвечиваем
+            if (_previewVisible)
+            {
+                if (auto* mesh = createPlacePreviewMesh(hit))
+                {
+                    _placePreviewRenderer = MeshRenderer::create();
+                    _placePreviewRenderer->addMesh(mesh);
+                    _placePreviewRenderer->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
+
+                    auto* material = MeshMaterial::createBuiltInMaterial(MeshMaterial::MaterialType::UNLIT, false);
+                    if (material)
+                    {
+                        BlendFunc blend;
+                        blend.src = backend::BlendFactor::SRC_ALPHA;
+                        blend.dst = backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
+                        material->getStateBlock().setBlendFunc(blend);
+                        material->getStateBlock().setDepthWrite(false);
+
+                        _placePreviewRenderer->setColor(ax::Color3B(
+                            static_cast<uint8_t>(_previewColor.r * 255),
+                            static_cast<uint8_t>(_previewColor.g * 255),
+                            static_cast<uint8_t>(_previewColor.b * 255)));
+                        _placePreviewRenderer->setOpacity(static_cast<uint8_t>(_previewColor.a * 255));
+                    }
+                    _placePreviewRenderer->setMaterial(material);
+                    this->addChild(_placePreviewRenderer);
+                }
+            }
+            // Грань НЕ подсвечиваем при установке — только preview
+            break;
     }
 }
 
