@@ -427,7 +427,7 @@ public:
      * 
      * @param worldPos Мировые координаты точки запроса
      * @return BlockId типа блока или BLOCK_AIR если чанк не загружен / координаты вне границ
-     * @note [FIX #2] Использует chunkData из ChunkEntry для потокобезопасного доступа
+     * @note Использует chunkData из ChunkEntry для потокобезопасного доступа
      *       без race conditions с генерацией/выгрузкой.
      */
     BlockId getBlockAtWorldPos(const ax::Vec3& worldPos) const;
@@ -479,12 +479,12 @@ private:
         ChunkStatus status = ChunkStatus::None; ///< Текущий статус в жизненном цикле
         ax::Node* visualNode = nullptr; ///< Указатель на отрисовываемый нод (если активен)
         
-        /// @brief [FIX #2] Хранение данных чанка до выгрузки для:
+        /// @brief Хранение данных чанка до выгрузки для:
         /// - Потокобезопасного запроса блоков (VoxelCollisionResolver)
         /// - Кросс-чанкового face culling при генерации соседей
         std::unique_ptr<ChunkData> chunkData;
         
-        /// @brief [FIX #10] Флаг необходимости перестроения меша
+        /// @brief Флаг необходимости перестроения меша
         ///< Устанавливается при загрузке соседей: грани на стыке могут стать невидимыми
         bool dirty = false;
     };
@@ -502,7 +502,7 @@ private:
         std::deque<ChunkKey> queue; ///< FIFO очередь ключей чанков на генерацию
         bool stop = false; ///< Флаг остановки для корректного завершения воркеров
         
-        /// @brief [FIX #15] Максимальный размер очереди для защиты памяти
+        /// @brief Максимальный размер очереди для защиты памяти
         size_t maxSize = 128;
         
         /**
@@ -512,7 +512,7 @@ private:
          */
         void push(const ChunkKey& k) {
             std::lock_guard<std::mutex> lk(mtx);
-            if (queue.size() >= maxSize) return; ///< [FIX #15] Защита от переполнения
+            if (queue.size() >= maxSize) return; ///< Защита от переполнения
             queue.push_back(k);
             cv.notify_one(); ///< Пробуждает один ожидающий воркер
         }
@@ -608,7 +608,7 @@ private:
      *    - ставит в _genQueue для обработки воркерами
      * 
      * @param playerChunk Ключ чанка, в котором находится игрок
-     * @note [FIX] Использует try_emplace для оптимизации хеш-поиска
+     * @note Использует try_emplace для оптимизации хеш-поиска
      */
     void collectChunksToLoad(const ChunkKey& playerChunk);
     
@@ -685,7 +685,7 @@ private:
      *    - Устанавливает новый visualNode и сбрасывает dirty
      *    - Вызывает _onVisualize() для добавления в сцену
      * 
-     * @note [FIX #10] Лимит per-frame предотвращает фризы при одновременной
+     * @note Лимит per-frame предотвращает фризы при одновременной
      *       загрузке множества соседей (например, при быстром полёте)
      */
     void processDirtyChunks();
@@ -716,7 +716,7 @@ private:
      * @param key Ключ чанка для позиционирования
      * @param data Ссылка на воксельные данные чанка
      * @return Указатель на созданный ax::Node или nullptr при ошибке
-     * @note [FIX #1 + #5] Вынесена в отдельный метод для переиспользования
+     * @note Вынесена в отдельный метод для переиспользования
      *       при первичной генерации и при перестроении dirty-чанков
      */
     ax::Node* buildChunkVisualNode(const ChunkKey& key, ChunkData& data);
@@ -795,12 +795,12 @@ private:
      *  @{ */
     // ========================================================================
     
-    /// @brief [FIX] Флаг паузы: отличает "приложение свёрнуто" от "сцена уничтожена"
+    /// @brief Флаг паузы: отличает "приложение свёрнуто" от "сцена уничтожена"
     ///< _paused = false + shutdown() → финальная остановка, потоки уничтожены
     ///< _paused = true + pause() → временная остановка, данные сохранены для resume()
     bool _paused = false;
     
-    /// @brief [FIX] Флаг инициализации для безопасного resume() после shutdown()
+    /// @brief Флаг инициализации для безопасного resume() после shutdown()
     ///< Гарантирует что resume() знает, был ли успешно вызван init() ранее
     bool _initialized = false;
     

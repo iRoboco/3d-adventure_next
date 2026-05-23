@@ -22,11 +22,11 @@ ax::Scene* GameScene::create()
 }
 
 // =========================================================================
-//  Деструктор — ⚡ FIX: shutdown() только здесь
+//  Деструктор
 // =========================================================================
 GameScene::~GameScene()
 {
-    // ⚡ FIX: Полная очистка только при уничтожении объекта.
+    // Полная очистка только при уничтожении объекта.
     // onExit() вызывает pause(), который сохраняет данные.
     // shutdown() здесь гарантирует, что ресурсы освобождены
     // при replaceScene() или завершении приложения.
@@ -47,7 +47,7 @@ bool GameScene::init()
     _mainCamera = ax::Camera::createPerspective(60.0f, aspect, 0.1f, 1000.0f);
     AX_ASSERT(_mainCamera && "Failed to create perspective camera");
 
-    // 🔧 FIX: Камера с USER1 должна рендерить только 3D-ноды.
+    // Камера с USER1 должна рендерить только 3D-ноды.
     // Устанавливаем depth < 0 чтобы 3D-камера рендерилась ПЕРЕД 2D default-камерой.
     _mainCamera->setCameraFlag(ax::CameraFlag::USER1);
     _mainCamera->setDepth(-1);
@@ -101,12 +101,12 @@ bool GameScene::init()
         }
     });
 
-    // 🔧 FIX: CameraFlag — маска USER1 на визуализируемые ноды
+    // CameraFlag — маска USER1 на визуализируемые ноды
     _chunkMgr.setOnVisualize([this](ax::Node* node, const ChunkKey& key) {
         if (!node) return;
         int tag = ((key.x & 0xFFFF) << 16) | (key.z & 0xFFFF);
         node->setTag(tag);
-        // 🔧 FIX: Маска USER1 чтобы 3D-камера рендерила этот нод
+        // Маска USER1 чтобы 3D-камера рендерила этот нод
         node->setCameraMask(static_cast<int>(ax::CameraFlag::USER1));
         this->addChild(node);
     });
@@ -133,7 +133,7 @@ bool GameScene::init()
 
     scheduleUpdate();
 
-    // 🔧 FIX: Сбрасываем _lastPlayerChunk чтобы чанки начали грузиться сразу,
+    // Сбрасываем _lastPlayerChunk чтобы чанки начали грузиться сразу,
     // а не после первого движения игрока (нажатия клавиши).
     // Вызываем ПОСЛЕ scheduleUpdate() чтобы update() сработал с правильным флагом.
     _chunkMgr.forceUpdate();
@@ -142,7 +142,7 @@ bool GameScene::init()
 }
 
 // =========================================================================
-//  onEnter — ⚡ FIX: resume вместо повторного init
+//  onEnter
 // =========================================================================
 void GameScene::onEnter()
 {
@@ -152,7 +152,7 @@ void GameScene::onEnter()
         _playerController->setEnabled(true);
     }
 
-    // ⚡ FIX: resume вместо повторного init.
+    // resume вместо повторного init.
     // Перезапускает воркеры, инициирует обновление чанков.
     // Если после shutdown() (полное уничтожение) — resume() ничего не сделает
     // (проверка _initialized внутри).
@@ -160,11 +160,11 @@ void GameScene::onEnter()
 }
 
 // =========================================================================
-//  onExit — ⚡ FIX: pause вместо shutdown
+//  onExit
 // =========================================================================
 void GameScene::onExit()
 {
-    // ⚡ FIX: pause вместо shutdown.
+    // pause вместо shutdown.
     // При сворачивании приложения нужно ЗАМОРОЗИТЬ мир, а не УНИЧТОЖИТЬ его.
     // shutdown() вызывается только в деструкторе.
     _chunkMgr.pause();
@@ -192,7 +192,7 @@ ax::Vec3 GameScene::getPlayerPosition() const
 }
 
 // =========================================================================
-//  onKeyPressed — обработка нажатия F12 для перезапуска уровня
+//  onKeyPressed
 // =========================================================================
 void GameScene::onKeyPressed(ax::EventKeyboard::KeyCode keyCode, ax::Event* event)
 {

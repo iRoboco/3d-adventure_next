@@ -17,7 +17,7 @@ public:
     static ax::Scene* create();
     bool init() override;
 
-    // ⚡ FIX: Деструктор для корректного shutdown() ChunkManager
+    // Деструктор для корректного shutdown() ChunkManager
     // Вызывается только при полном уничтожении сцены (replaceScene, quit),
     // но НЕ при сворачивании приложения.
     ~GameScene() override;

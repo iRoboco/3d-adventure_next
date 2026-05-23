@@ -18,7 +18,7 @@ void ChunkManager::init(const Config& cfg)
     _cfg = cfg;
     AX_ASSERT(_cfg.workerThreadCount > 0);
     _running.store(true, std::memory_order_release);
-    // ⚡ FIX: Инициализация флагов pause/resume
+    // Инициализация флагов pause/resume
     _paused = false;
     _initialized = true;
 
@@ -36,12 +36,12 @@ void ChunkManager::init(const Config& cfg)
     }
     AX_ASSERT(_terrainAtlas != nullptr && "Failed to create even fallback texture!");
 
-    // ⚡ FIX: Вынос запуска воркеров в отдельный метод
+    // Вынос запуска воркеров в отдельный метод
     startWorkers();
 }
 
 // =========================================================================
-//  ⚡ FIX: startWorkers — выделенная логика запуска воркеров.
+//  startWorkers — выделенная логика запуска воркеров.
 //  Используется и в init(), и в resume(). Избегает дублирования кода.
 // =========================================================================
 void ChunkManager::startWorkers()
@@ -86,12 +86,12 @@ void ChunkManager::shutdown()
     // Сбрасываем текстуру (она может быть удалена из кэша при context lost)
     _terrainAtlas = nullptr;
 
-    // ⚡ FIX: Сброс флагов после полного уничтожения
+    // Сброс флагов после полного уничтожения
     _paused = false;
 }
 
 // =========================================================================
-//  ⚡ FIX: pause — вызывается из onExit при сворачивании приложения.
+//  pause — вызывается из onExit при сворачивании приложения.
 //  Останавливает генерацию, но сохраняет ВСЕ данные чанков в памяти.
 //  Визуальные ноды остаются в сцене (они просто не обновляются).
 // =========================================================================
@@ -121,7 +121,7 @@ void ChunkManager::pause()
 
     // Шаг 4: Очищаем очередь генерации (при resume заполним заново).
     // НЕ очищаем _chunks — это ядро данных.
-    // ⚡ Используем clearAndReset вместо прямого доступа к полям. Сбрасываем флаг для будущего resume
+    // Используем clearAndReset вместо прямого доступа к полям. Сбрасываем флаг для будущего resume
 	// _genQueue.queue.clear(); // TODO проверить как работало до и как теперь
 	// _genQueue.stop = false;
 	_genQueue.clearAndReset();
@@ -131,7 +131,7 @@ void ChunkManager::pause()
 }
 
 // =========================================================================
-//  ⚡ FIX: resume — вызывается из onEnter при разворачивании приложения.
+//  resume — вызывается из onEnter при разворачивании приложения.
 //  Перезапускает воркеры и инициирует обновление чанков вокруг игрока.
 // =========================================================================
 void ChunkManager::resume()
@@ -171,7 +171,7 @@ void ChunkManager::resume()
 }
 
 // =========================================================================
-//  workerLoop — 🔧 FIX: Убран дублирующий thread_local PerlinNoise + ветка else
+//  workerLoop
 // =========================================================================
 void ChunkManager::workerLoop()
 {
@@ -183,7 +183,6 @@ void ChunkManager::workerLoop()
         {
             _onGenerate(*chunk);
         }
-        // 🔧 FIX: Удалена ветка else с дублирующим thread_local PerlinNoise.
         // Коллбек _onGenerate всегда установлен из GameScene::init(),
         // где создаётся свой thread_local PerlinNoise.
         {
@@ -198,7 +197,7 @@ void ChunkManager::workerLoop()
 // =========================================================================
 void ChunkManager::update(const ax::Vec3& playerWorldPos)
 {
-    // ⚡ FIX: Пропускаем обновление, если менеджер на паузе.
+    // Пропускаем обновление, если менеджер на паузе.
     // Это предотвращает лишние вычисления при сворачивании приложения.
     if (_paused) return;
 
@@ -237,11 +236,11 @@ BlockId ChunkManager::getBlockAtWorldPos(const ax::Vec3& worldPos) const
 }
 
 // =========================================================================
-//  collectChunksToLoad — 🔧 FIX: try_emplace вместо двойного lookup
+//  collectChunksToLoad
 // =========================================================================
 void ChunkManager::collectChunksToLoad(const ChunkKey& playerChunk)
 {
-    // ⚡ FIX: Не загружаем новые чанки, если на паузе
+    // Не загружаем новые чанки, если на паузе
     if (_paused) return;
 
     int rd = _cfg.renderDistance;
@@ -260,7 +259,7 @@ void ChunkManager::collectChunksToLoad(const ChunkKey& playerChunk)
     std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b){ return a.first < b.first; });
     for (const auto& [dist, key] : candidates)
     {
-        // 🔧 FIX: try_emplace — один lookup вместо find + operator[]
+        //  try_emplace — один lookup вместо find + operator[]
         auto [it, inserted] = _chunks.try_emplace(key);
         auto& entry = it->second;
         entry.status = ChunkStatus::QueuedForGen;
@@ -277,7 +276,7 @@ void ChunkManager::collectChunksToLoad(const ChunkKey& playerChunk)
 // =========================================================================
 void ChunkManager::collectChunksToUnload(const ChunkKey& playerChunk)
 {
-    // ⚡ FIX: Не выгружаем чанки, если на паузе
+    // Не выгружаем чанки, если на паузе
     if (_paused) return;
 
     int unloadDist = _cfg.renderDistance + _cfg.unloadMargin;
@@ -302,7 +301,7 @@ void ChunkManager::collectChunksToUnload(const ChunkKey& playerChunk)
 }
 
 // =========================================================================
-//  buildChunkVisualNode — 🔧 FIX: Полностью переписан на реальный API
+//  buildChunkVisualNode
 // =========================================================================
 ax::Node* ChunkManager::buildChunkVisualNode(const ChunkKey& key, ChunkData& data)
 {
@@ -329,7 +328,7 @@ ax::Node* ChunkManager::buildChunkVisualNode(const ChunkKey& key, ChunkData& dat
 
     // Мешбилдинг
     std::vector<ChunkVertex> verts;
-    // ⚡ MIN FIX: Тип изменён с std::vector<uint16_t> на ax::IndexArray
+    // Используем ax::IndexArray вместо std::vector<uint16_t>
     // для совместимости с Mesh::create(const IndexArray& indices).
     // Конструктор по умолчанию IndexArray() инициализирует stride=2 (U_SHORT).
     ax::IndexArray inds;
@@ -338,11 +337,11 @@ ax::Node* ChunkManager::buildChunkVisualNode(const ChunkKey& key, ChunkData& dat
     ax::Mesh* mesh = createMesh(verts, inds, _terrainAtlas);
     if (!mesh) return nullptr;
 
-    // 🔧 FIX: MeshRenderer — это Node (наследник Node), а НЕ компонент.
+    //  MeshRenderer — это Node (наследник Node), а НЕ компонент.
     auto* chunkNode = ax::MeshRenderer::create();
     chunkNode->addMesh(mesh);
 
-    // 🔧 FIX: Используем MeshMaterial::createBuiltInMaterial()
+    //  Используем MeshMaterial::createBuiltInMaterial()
     auto* material = ax::MeshMaterial::createBuiltInMaterial(
         ax::MeshMaterial::MaterialType::UNLIT, false);
     if (material && _terrainAtlas)
@@ -391,7 +390,7 @@ void ChunkManager::processReadyChunks()
         if (it == _chunks.end() || it->second.status == ChunkStatus::QueuedForUnload)
         { cancelGen(); continue; }
         it->second.chunkData = std::move(chunkPtr);
-        // 🔧 Используем isAllAir() для пропуска пустых чанков
+        // Используем isAllAir() для пропуска пустых чанков
         if (it->second.chunkData->isAllAir()) {
             it->second.status = ChunkStatus::Active;
             it->second.visualNode = nullptr;
@@ -442,7 +441,7 @@ void ChunkManager::processReadyChunks()
 // =========================================================================
 void ChunkManager::processDirtyChunks()
 {
-    // ⚡ FIX: Не обрабатываем dirty-чанки, если на паузе
+    // Не обрабатываем dirty-чанки, если на паузе
     if (_paused) return;
 
     std::vector<ChunkKey> dirtyKeys;
@@ -476,7 +475,7 @@ void ChunkManager::processDirtyChunks()
 // =========================================================================
 void ChunkManager::processUnloadQueue()
 {
-    // ⚡ FIX: Не выгружаем чанки, если на паузе
+    // Не выгружаем чанки, если на паузе
     if (_paused) return;
 
     int processed = 0;

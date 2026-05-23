@@ -3,13 +3,6 @@
 
 class ChunkManager;
 
-/// @namespace voxel_collision
-/// @brief Пространство имён для систем воксельной физики и коллизий.
-/// Содержит резолвер столкновений на основе sweep-алгоритма с sub-stepping,
-/// обеспечивающий стабильную работу при высоком FPS и предотвращающий туннелирование.
-namespace voxel_collision
-{
-
 // ============================================================================
 /** @name Физические параметры игрока
  *  @{ */
@@ -104,7 +97,7 @@ public:
     /// @param chunkMgr Указатель на менеджер чанков для запросов блоков
     /// @note Ссылка хранится как const — резолвер только читает данные мира,
     ///       не модифицирует состояние ChunkManager.
-    explicit VoxelCollisionResolver(const ChunkManager* chunkMgr);
+    explicit VoxelCollisionResolver(const ChunkManager* chunkMgr) : _chunkMgr(chunkMgr) {}
 
     /// @brief Главный метод разрешения коллизий за кадр
     /// @param dt Дельта времени с прошлого кадра (секунды)
@@ -189,5 +182,3 @@ private:
 };
 
 /// @} // конец группы "Основной резолвер коллизий"
-
-} // namespace voxel_collision

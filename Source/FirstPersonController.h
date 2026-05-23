@@ -361,11 +361,11 @@ private:
     
     /// @brief Резолвер коллизий с воксельным миром (ленивая инициализация)
     ///< Создаётся в первом update() при наличии _chunkMgr, уникален для экземпляра
-    std::unique_ptr<voxel_collision::VoxelCollisionResolver> _collisionResolver;
+    std::unique_ptr<VoxelCollisionResolver> _collisionResolver;
     
     /// @brief Физическая капсула игрока для расчёта коллизий
     ///< _bottomPos обновляется в resolve(), синхронизируется с позицией ноды
-    voxel_collision::PlayerCapsule _capsule;
+    PlayerCapsule _capsule;
     
     /// @name Векторы скорости
     /// @{

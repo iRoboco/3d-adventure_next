@@ -16,7 +16,7 @@ FirstPersonController::FirstPersonController() = default;
 
 FirstPersonController::~FirstPersonController()
 {
-    // 🔧 FIX: Явное снятие listener'ов в деструкторе — защита от
+    // Явное снятие listener'ов в деструкторе — защита от
     // dangling callback, если onExit не был вызван
     if (_eventDispatcher) {
         if (_keyboardListener) _eventDispatcher->removeEventListener(_keyboardListener);
@@ -126,7 +126,7 @@ void FirstPersonController::setFreeFlightMode(bool enabled)
             if (window)
             {
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-                // 🔧 FIX: Получаем текущую позицию курсора из GLFW для корректной инициализации
+                // Получаем текущую позицию курсора из GLFW для корректной инициализации
                 // Это предотвращает скачок камеры при первом движении мыши после захвата
                 double xpos, ypos;
                 glfwGetCursorPos(window, &xpos, &ypos);
@@ -143,12 +143,13 @@ void FirstPersonController::toggleFlightMode()
 }
 
 // =========================================================================
-//  🔧 FIX: onExit — безопасное снятие Fixed-priority listener
+//   onExit
 // =========================================================================
 void FirstPersonController::onExit()
 {
-    // 🔧 Keyboard listener зарегистрирован с Fixed Priority (не привязан к scene graph).
+    // Keyboard listener зарегистрирован с Fixed Priority (не привязан к scene graph).
     // При удалении ноды из сцены, Axmol НЕ снимает его автоматически.
+    // Безопасное снятие Fixed-priority listener
     if (_eventDispatcher) {
         if (_keyboardListener) {
             _eventDispatcher->removeEventListener(_keyboardListener);
@@ -196,7 +197,7 @@ void FirstPersonController::update(float dt)
     if (!_enabled || !_camera || dt <= 0.0f) return;
 
     if (!_collisionResolver && _chunkMgr) {
-        _collisionResolver = std::make_unique<voxel_collision::VoxelCollisionResolver>(_chunkMgr);
+        _collisionResolver = std::make_unique<VoxelCollisionResolver>(_chunkMgr);
     }
 
     if (_freeFlightMode) {
@@ -218,7 +219,7 @@ void FirstPersonController::update(float dt)
 
     // === РЕЖИМ FPS ===
 
-    // ⚡ MIN FIX: Защита от провала сквозь мир при старте.
+    // Защита от провала сквозь мир при старте.
     // Проблема: первые N кадров чанки ещё генерируются в фоновых потоках,
     // getBlockAtWorldPos() возвращает BLOCK_AIR для любой позиции,
     // коллизий нет, и игрок падает в бесконечность.
@@ -301,7 +302,7 @@ void FirstPersonController::update(float dt)
             _currentVelocity.y = 0.0f;
         }
 
-        // ⚡ MIN FIX: Защитный clamp — предотвращает провал ниже Y=0.
+        // Защитный clamp — предотвращает провал ниже Y=0.
         // Если игрок по какой-либо причине оказался ниже нулевого уровня
         // (просадка FPS, туннелирование, ещё не загруженные чанки),
         // телепортируем на поверхность и сбрасываем скорость.
@@ -322,7 +323,7 @@ void FirstPersonController::update(float dt)
 }
 
 // =========================================================================
-//  Event Listeners — 🔧 FIX: Mouse listener привязан к scene graph
+//  Event Listeners —  Mouse listener привязан к scene graph
 // =========================================================================
 void FirstPersonController::setupEventListeners()
 {
@@ -330,13 +331,13 @@ void FirstPersonController::setupEventListeners()
     _mouseListener->onMouseMove = [this](auto* event) { this->onMouseMove(event); return true; };
     _mouseListener->onMouseDown = [this](auto* event) { this->onMouseDown(event); return true; };
     _mouseListener->onMouseUp = [this](auto* event) { this->onMouseUp(event); return true; };
-    // 🔧 Mouse listener привязан к scene graph — снимается автоматически при удалении ноды
+    // Mouse listener привязан к scene graph — снимается автоматически при удалении ноды
     _eventDispatcher->addEventListenerWithSceneGraphPriority(_mouseListener, this);
 
     _keyboardListener = ax::EventListenerKeyboard::create();
     _keyboardListener->onKeyPressed  = [this](auto code, auto* event) { onKeyPressed(code, event); };
     _keyboardListener->onKeyReleased = [this](auto code, auto* event) { onKeyReleased(code, event); };
-    // 🔧 FIX: Keyboard listener — Fixed priority (требует явного снятия в onExit/dtor)
+    // Keyboard listener — Fixed priority (требует явного снятия в onExit/dtor)
     _eventDispatcher->addEventListenerWithFixedPriority(_keyboardListener, 10);
 }
 
@@ -367,7 +368,7 @@ void FirstPersonController::onMouseMove(ax::Event* event)
     auto* e = static_cast<ax::EventMouse*>(event);
 
 
-    //Vec2 delta(e->getDelta()); FIX
+    // Vec2 delta(e->getDelta());
     // Вычисляем дельту вручную через текущие и предыдущие координаты курсора.
     float currentX = e->getCursorX();
     float currentY = e->getCursorY();
