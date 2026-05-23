@@ -145,9 +145,8 @@ bool GameScene::init()
 
     // Настройка визуала подсветки
     _raycaster->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
-    _raycaster->setOutlineColor({0.0f, 0.0f, 0.0f, 0.7f});         // Тёмный контур блока
-    _raycaster->setFaceHighlightColor({1.0f, 1.0f, 1.0f, 0.25f});  // Белая подсветка грани
-    _raycaster->setPlacePreviewColor({0.2f, 0.9f, 0.2f, 0.2f});    // Зелёный preview
+    _raycaster->setFaceHighlightColor({1.0f, 1.0f, 1.0f, 0.25f});  // Подсветка грани
+    _raycaster->setPlacePreviewColor({0.2f, 0.9f, 0.2f, 0.2f});    // Выбор места кубика
     _raycaster->setPlacePreviewVisible(true);
 
     // Коллбек при наведении на блок — меняем цвет подсветки по типу блока
