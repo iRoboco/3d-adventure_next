@@ -2,6 +2,7 @@
 #include "axmol.h"
 #include "ChunkManager.h"
 #include "FirstPersonController.h"
+#include "VoxelRaycaster.h"
 
 /**
 @brief Основная игровая сцена (Gameplay Scene)
@@ -43,5 +44,6 @@ private:
     ax::Camera*            _mainCamera = nullptr;
     // Абстрактная ссылка для внешних систем (UI, звук, сеть)
     ax::Node*              _playerNode = nullptr;
+    VoxelRaycasterNode*    _raycaster = nullptr;
 };
 

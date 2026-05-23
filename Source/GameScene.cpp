@@ -59,7 +59,7 @@ bool GameScene::init()
     auto _textureCube = TextureCube::create("envmap_miramar/miramar_lf.tga", "envmap_miramar/miramar_rt.tga",
                                             "envmap_miramar/miramar_up.tga", "envmap_miramar/miramar_dn.tga",
                                             "envmap_miramar/miramar_ft.tga", "envmap_miramar/miramar_bk.tga");
-    auto _skyBox = Skybox::create();
+    auto _skyBox      = Skybox::create();
     _skyBox->setTexture(_textureCube);
     _skyBox->setCameraMask((unsigned short)CameraFlag::USER1);
     this->addChild(_skyBox);
@@ -125,10 +125,7 @@ bool GameScene::init()
         this->addChild(node);
     });
     _chunkMgr.setOnUnload([this](ax::Node* node, const ChunkKey& key) {
-        if (node)
-        {
-            node->removeFromParentAndCleanup(true);
-        }
+        if (node) node->removeFromParentAndCleanup(true);
     });
 
     // Создание контроллера
@@ -139,6 +136,42 @@ bool GameScene::init()
     this->addChild(_playerController);
 
     _playerNode = _playerController;
+
+    // ============================================================================
+    // Рейкастер — подсветка грани и редактирование мира
+    // ============================================================================
+    _raycaster = VoxelRaycasterNode::create(_mainCamera, &_chunkMgr, 8.0f);
+    AX_ASSERT(_raycaster && "Failed to create VoxelRaycasterNode");
+
+    // Настройка визуала подсветки
+    _raycaster->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
+    _raycaster->setOutlineColor({0.0f, 0.0f, 0.0f, 0.7f});         // Тёмный контур блока
+    _raycaster->setFaceHighlightColor({1.0f, 1.0f, 1.0f, 0.25f});  // Белая подсветка грани
+    _raycaster->setPlacePreviewColor({0.2f, 0.9f, 0.2f, 0.2f});    // Зелёный preview
+    _raycaster->setPlacePreviewVisible(true);
+
+    // Коллбек при наведении на блок — меняем цвет подсветки по типу блока
+    _raycaster->setOnHit([this](const VoxelHit& hit) {
+        switch (hit.blockId)
+        {
+        case BLOCK_GRASS:
+            _raycaster->setFaceHighlightColor({0.2f, 0.8f, 0.2f, 0.3f});
+            break;
+        case BLOCK_STONE:
+            _raycaster->setFaceHighlightColor({0.6f, 0.6f, 0.6f, 0.3f});
+            break;
+        case BLOCK_DIRT:
+            _raycaster->setFaceHighlightColor({0.5f, 0.35f, 0.2f, 0.3f});
+            break;
+        default:
+            _raycaster->setFaceHighlightColor({1.0f, 1.0f, 1.0f, 0.25f});
+            break;
+        }
+    });
+    _raycaster->setOnMiss([this]() {
+    // Можно скрыть HUD-подсказку
+    });
+    this->addChild(_raycaster);
 
     // Включаем обработку клавиатуры для перезапуска уровня
     auto listener          = ax::EventListenerKeyboard::create();
@@ -154,6 +187,8 @@ bool GameScene::init()
 
     return true;
 }
+
+
 
 // =========================================================================
 //  onEnter

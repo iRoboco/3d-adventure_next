@@ -27,6 +27,7 @@
 #include <memory>
 
 class ChunkManager;
+class VoxelRaycasterNode;
 
 // ============================================================================
 /** @name Контроллер первого лица
@@ -131,7 +132,13 @@ public:
      *       Ссылка хранится как const, модификации мира через контроллер запрещены.
      */
     void setChunkManager(ChunkManager* mgr) { _chunkMgr = mgr; }
-    
+
+    /**
+     * @brief Установка рейкастера для ломания/становки блоков
+     */
+    void setRaycaster(VoxelRaycasterNode* raycaster) { _raycaster = raycaster; }
+
+
     /// @} // конец группы "Интеграция с миром"
     
     // ========================================================================
@@ -411,7 +418,9 @@ private:
     
     ChunkManager* _chunkMgr = nullptr; ///< Ссылка на менеджер чанков для запросов блоков
     ///< Используется только для чтения: getBlockAtWorldPos(), isChunkActive()
-    
+
+    VoxelRaycasterNode* _raycaster = nullptr; ///< Cсылка на рейкастер для редактирования мира 
+
     /// @} // конец группы "Интеграция с миром"
 };
 

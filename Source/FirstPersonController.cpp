@@ -1,5 +1,6 @@
 #include "FirstPersonController.h"
 #include "ChunkManager.h"
+#include "VoxelRaycaster.h"
 #include <algorithm>
 #include <cmath>
 
@@ -345,10 +346,27 @@ void FirstPersonController::onMouseDown(ax::Event* event)
 {
     if (!_enabled) return;
     auto* e = static_cast<ax::EventMouse*>(event);
-    if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_LEFT) {
-        if (_freeFlightMode) {
+    // ЛКМ — ломать блок (всегда, не только в freeFlight)
+    if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_LEFT)
+    {
+        if (_raycaster)
+        {
+            _raycaster->breakBlock();
+        }
+
+        // В freeFlight ЛКМ также включает look-around
+        if (_freeFlightMode)
+        {
             _isLeftMousePressed = true;
             _lastMousePos.set(e->getCursorX(), e->getCursorY());
+        }
+    }
+    // ПКМ — ставить блок
+    else if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_RIGHT)
+    {
+        if (_raycaster)
+        {
+            _raycaster->placeBlock(BLOCK_STONE);
         }
     }
 }

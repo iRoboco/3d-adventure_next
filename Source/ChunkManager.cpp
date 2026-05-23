@@ -555,3 +555,68 @@ void ChunkManager::applyTextureFilter()
     // Применяем параметры к текстуре-атласу 
     _terrainAtlas->setTexParameters(texParams);
 }
+
+// =========================================================================
+//  Установка типа блока по мировым координатам
+// =========================================================================
+
+bool ChunkManager::setBlockAtWorldPos(const ax::Vec3& worldPos, BlockId id)
+{
+    ChunkKey key = worldToChunk(worldPos);
+    auto it      = _chunks.find(key);
+    if (it == _chunks.end())
+        return false;
+
+    ChunkEntry& entry = it->second;
+    if (entry.status != ChunkStatus::Active || !entry.chunkData)
+        return false;
+
+    ax::Vec3 base = chunkToWorld(key);
+    int lx        = static_cast<int>(std::floor(worldPos.x)) - static_cast<int>(base.x);
+    int ly        = static_cast<int>(std::floor(worldPos.y)) - static_cast<int>(base.y);
+    int lz        = static_cast<int>(std::floor(worldPos.z)) - static_cast<int>(base.z);
+
+    if (lx < 0 || lx >= CHUNK_SIZE_X)
+        return false;
+    if (ly < 0 || ly >= CHUNK_SIZE_Y)
+        return false;
+    if (lz < 0 || lz >= CHUNK_SIZE_Z)
+        return false;
+
+    entry.chunkData->setBlock(lx, ly, lz, id);
+    entry.dirty = true;
+
+    // Помечаем соседние чанки dirty если блок на границе
+    const int lCoords[3]    = {lx, ly, lz};
+    const int chunkSizes[3] = {CHUNK_SIZE_X, CHUNK_SIZE_Y, CHUNK_SIZE_Z};
+
+    const int kAxis[6] = {0, 0, 1, 1, 2, 2};
+    const int kDir[6]  = {1, -1, 1, -1, 1, -1};
+
+    for (int i = 0; i < 6; ++i)
+    {
+        int axis = kAxis[i];
+        int dir  = kDir[i];
+
+        bool onBoundary = (dir > 0) ? (lCoords[axis] == chunkSizes[axis] - 1) : (lCoords[axis] == 0);
+
+        if (!onBoundary)
+            continue;
+
+        ChunkKey neighborKey = key;
+        if (axis == 0)
+            neighborKey.x += dir;
+        else if (axis == 1)
+            neighborKey.y += dir;
+        else
+            neighborKey.z += dir;
+
+        auto nit = _chunks.find(neighborKey);
+        if (nit != _chunks.end() && nit->second.status == ChunkStatus::Active)
+        {
+            nit->second.dirty = true;
+        }
+    }
+
+    return true;
+}
