@@ -41,6 +41,7 @@ Generated Files
 AppPackages
 BundleArtifacts
 .vs/
+.qodo/
 *.VC.db
 
 # Ignore files build by ndk and eclipse

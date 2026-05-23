@@ -36,6 +36,9 @@ void ChunkManager::init(const Config& cfg)
     }
     AX_ASSERT(_terrainAtlas != nullptr && "Failed to create even fallback texture!");
 
+    // Применяем фильтрацию текстур из конфигурации
+    applyTextureFilter();
+
     // Вынос запуска воркеров в отдельный метод
     startWorkers();
 }
@@ -155,6 +158,7 @@ void ChunkManager::resume()
     // текстура станет невалидной. Пересоздаём из кэша.
     if (!_terrainAtlas || _terrainAtlas->getPixelsWide() <= 0) {
         _terrainAtlas = ax::Director::getInstance()->getTextureCache()->addImage("textures/terrain_atlas.png");
+        applyTextureFilter();
         if (_terrainAtlas) {
             // Текстура обновлена, но материал чанков ссылается на старую.
             // Нужно перестроить визуальные ноды для чанков с материалом.
@@ -514,4 +518,40 @@ bool ChunkManager::isChunkActive(const ChunkKey& key) const
 {
     auto it = _chunks.find(key);
     return it != _chunks.end() && it->second.status == ChunkStatus::Active;
+}
+
+// =========================================================================
+//  Фильтрация текстур
+// =========================================================================
+void ChunkManager::applyTextureFilter()
+{
+    if (!_terrainAtlas)
+        return;
+
+    // Настройка параметров текстуры для пиксельной фильтрации
+    ax::Texture2D::TexParams texParams;
+
+    switch (_cfg.textureFilter)
+    {
+    case TextureFilterMode::NEAREST:
+        texParams.magFilter = ax::backend::SamplerFilter::NEAREST;
+        texParams.minFilter = ax::backend::SamplerFilter::NEAREST;
+        AXLOGI("ChunkManager: texture filter = NEAREST");
+        break;
+
+    case TextureFilterMode::NEAREST_MIPMAP_NEAREST:
+        texParams.magFilter = ax::backend::SamplerFilter::NEAREST;
+        texParams.minFilter = ax::backend::SamplerFilter::NEAREST_MIPMAP_NEAREST;
+        // Автоматическая генерация mipmaps при первом использовании
+        if (!_terrainAtlas->hasMipmaps())
+        {
+            _terrainAtlas->generateMipmap();
+            AXLOGI("ChunkManager: mipmaps generated");
+        }
+        AXLOGI("ChunkManager: texture filter = NEAREST_MIPMAP_NEAREST");
+        break;
+    }
+
+    // Применяем параметры к текстуре-атласу 
+    _terrainAtlas->setTexParameters(texParams);
 }
