@@ -38,13 +38,14 @@ GameScene::~GameScene()
 // =========================================================================
 bool GameScene::init()
 {
-    if (!Scene::init()) return false;
+    if (!Scene::init())
+        return false;
 
-    auto glView = ax::Director::getInstance()->getGLView();
-    float w = glView->getFrameSize().width;
-    float h = glView->getFrameSize().height;
+    auto glView  = ax::Director::getInstance()->getGLView();
+    float w      = glView->getFrameSize().width;
+    float h      = glView->getFrameSize().height;
     float aspect = (h > 0.0f) ? (w / h) : 16.0f / 9.0f;
-    _mainCamera = ax::Camera::createPerspective(60.0f, aspect, 0.1f, 1000.0f);
+    _mainCamera  = ax::Camera::createPerspective(60.0f, aspect, 0.1f, 1000.0f);
     AX_ASSERT(_mainCamera && "Failed to create perspective camera");
 
     // Камера с USER1 должна рендерить только 3D-ноды.
@@ -54,31 +55,43 @@ bool GameScene::init()
 
     this->addChild(_mainCamera);
 
+    // Создаем небо (Skybox) с текстурным кубом
+    auto _textureCube = TextureCube::create("envmap_miramar/miramar_lf.tga", "envmap_miramar/miramar_rt.tga",
+                                            "envmap_miramar/miramar_up.tga", "envmap_miramar/miramar_dn.tga",
+                                            "envmap_miramar/miramar_ft.tga", "envmap_miramar/miramar_bk.tga");
+    auto _skyBox = Skybox::create();
+    _skyBox->setTexture(_textureCube);
+    _skyBox->setCameraMask((unsigned short)CameraFlag::USER1);
+    this->addChild(_skyBox);
+
     // Конфигурация чанков
     ChunkManager::Config cfg;
-    cfg.renderDistance         = 8;
-    cfg.unloadMargin           = 3;
-    cfg.workerThreadCount      = std::max(1u, std::thread::hardware_concurrency() / 2);
-    cfg.maxGenerationsPerFrame = 2;
-    cfg.maxUnloadsPerFrame     = 4;
-    cfg.maxQueueSize           = 128;
+    cfg.renderDistance           = 8;
+    cfg.unloadMargin             = 3;
+    cfg.workerThreadCount        = std::max(1u, std::thread::hardware_concurrency() / 2);
+    cfg.maxGenerationsPerFrame   = 2;
+    cfg.maxUnloadsPerFrame       = 4;
+    cfg.maxQueueSize             = 128;
     cfg.maxDirtyRebuildsPerFrame = 2;
     _chunkMgr.init(cfg);
 
     // Коллбеки
     _chunkMgr.setOnGenerate([](ChunkData& chunk) {
         const ChunkKey& key = chunk.getKey();
-        auto basePos = ChunkManager::chunkToWorld(key);
+        auto basePos        = ChunkManager::chunkToWorld(key);
         thread_local siv::PerlinNoise perlin(42);
-        for (int x = 0; x < CHUNK_SIZE_X; ++x) {
-            for (int z = 0; z < CHUNK_SIZE_Z; ++z) {
-                float wx = basePos.x + x;
-                float wz = basePos.z + z;
+        for (int x = 0; x < CHUNK_SIZE_X; ++x)
+        {
+            for (int z = 0; z < CHUNK_SIZE_Z; ++z)
+            {
+                float wx      = basePos.x + x;
+                float wz      = basePos.z + z;
                 float terrain = perlin.octave2D_01(wx * 0.02, wz * 0.02, 6) * 40.0f;
                 float biome   = perlin.octave2D_01(wx * 0.005, wz * 0.005, 4) * 15.0f - 5.0f;
-                int surfaceY = std::clamp(static_cast<int>(terrain + biome + 30), 1, CHUNK_SIZE_Y - 2);
-                for (int y = 0; y <= surfaceY; ++y) {
-                    //BlockId block = (y == surfaceY) ? 1 : (y > surfaceY - 4 ? 2 : 3);
+                int surfaceY  = std::clamp(static_cast<int>(terrain + biome + 30), 1, CHUNK_SIZE_Y - 2);
+                for (int y = 0; y <= surfaceY; ++y)
+                {
+                    // BlockId block = (y == surfaceY) ? 1 : (y > surfaceY - 4 ? 2 : 3);
                     BlockId block;
                     if (y == surfaceY)
                     {
@@ -103,7 +116,8 @@ bool GameScene::init()
 
     // CameraFlag — маска USER1 на визуализируемые ноды
     _chunkMgr.setOnVisualize([this](ax::Node* node, const ChunkKey& key) {
-        if (!node) return;
+        if (!node)
+            return;
         int tag = ((key.x & 0xFFFF) << 16) | (key.z & 0xFFFF);
         node->setTag(tag);
         // Маска USER1 чтобы 3D-камера рендерила этот нод
@@ -111,7 +125,8 @@ bool GameScene::init()
         this->addChild(node);
     });
     _chunkMgr.setOnUnload([this](ax::Node* node, const ChunkKey& key) {
-        if (node) {
+        if (node)
+        {
             node->removeFromParentAndCleanup(true);
         }
     });
@@ -124,7 +139,6 @@ bool GameScene::init()
     this->addChild(_playerController);
 
     _playerNode = _playerController;
-
 
     // Включаем обработку клавиатуры для перезапуска уровня
     auto listener          = ax::EventListenerKeyboard::create();
@@ -148,7 +162,8 @@ void GameScene::onEnter()
 {
     Scene::onEnter();
 
-    if (_playerController) {
+    if (_playerController)
+    {
         _playerController->setEnabled(true);
     }
 
@@ -169,7 +184,8 @@ void GameScene::onExit()
     // shutdown() вызывается только в деструкторе.
     _chunkMgr.pause();
 
-    if (_playerController) {
+    if (_playerController)
+    {
         _playerController->setEnabled(false);
     }
 
@@ -203,4 +219,3 @@ void GameScene::onKeyPressed(ax::EventKeyboard::KeyCode keyCode, ax::Event* even
         ax::Director::getInstance()->replaceScene(scene);
     }
 }
-
