@@ -68,19 +68,50 @@ struct ChunkVertex
  * 
  * @note Функция inline — компилируется в месте вызова, нулевые накладные расходы.
  */
-inline std::array<float, 4> calculateBlockUV(uint16_t blockId, int atlasSize = 4)
+// Новая функция: вычисляет UV для конкретного индекса тайла в атласе
+inline std::array<float, 4> calculateTileUV(uint16_t tileIndex, int atlasSize = 4)
 {
-    // Защита от деления на 0 и корректная обработка воздуха
-    uint16_t idx = (blockId == 0 || blockId >= 256) ? 0 : blockId;
-    //uint16_t idx = (blockId == 0) ? 0 : (blockId % 256);
-    
-    // Расчёт границ тайла в нормированном пространстве [0.0, 1.0]
+    // Защита от деления на 0 и корректная обработка невалидных индексов
+    uint16_t idx = (tileIndex == 0 || tileIndex >= 256) ? 0 : tileIndex;
     float tileU = (idx % atlasSize) / static_cast<float>(atlasSize);
     float tileV = (idx / atlasSize) / static_cast<float>(atlasSize);
     float tileSize = 1.0f / static_cast<float>(atlasSize);
-
-    // [u_min, v_min, u_max, v_max] — готово для привязки к вершинам
     return { tileU, tileV, tileU + tileSize, tileV + tileSize };
+}
+
+// Обёртка для обратной совместимости: ранее называлась calculateBlockUV
+inline std::array<float, 4> calculateBlockUV(uint16_t blockId, int atlasSize = 4)
+{
+    return calculateTileUV(blockId, atlasSize);
+}
+
+// Возвращает индекс тайла в атласе для конкретной грани блока
+// face: 0=+X, 1=-X, 2=+Y(top), 3=-Y(bottom), 4=+Z, 5=-Z
+// Atlas 4x4 layout (first row): 0=Grass, 1=Grass with dirt, 2=Dirt, 3=Stone
+inline uint16_t getBlockTileIndex(uint16_t blockId, int face)
+{
+    switch (blockId)
+    {
+        case BLOCK_GRASS:
+        {
+            // Трава (BLOCK_GRASS):
+            // - Верх (+Y): травяной тайл (0)
+            // - Низ (-Y): земля (2)
+            // - Бока (±X, ±Z): земля с травой (1)
+            const uint16_t TILE_GRASS_TOP = 0;   // grass top texture
+            const uint16_t TILE_GRASS_SIDE = 1;  // grass side (earth with grass border)
+            const uint16_t TILE_DIRT = 2;        // dirt texture
+            if (face == 2) return TILE_GRASS_TOP;      // +Y face
+            if (face == 3) return TILE_DIRT;           // -Y face
+            return TILE_GRASS_SIDE;                    // ±X and ±Z faces
+        }
+        case BLOCK_STONE:
+            return 3;  // stone texture on all faces
+        case BLOCK_DIRT:
+            return 2;  // dirt texture on all faces
+        default:
+            return 0;  // fallback: use grass tile
+    }
 }
 
 /// @}
@@ -216,8 +247,10 @@ inline void buildChunkMesh(const ChunkData& data,
                 uint16_t bid = data.getBlock(x, y, z);
                 if (bid == BLOCK_AIR) continue;  ///< Пропускаем воздух — геометрия не нужна
 
-                // UV вычисляем один раз на блок, переиспользуем для всех 6 граней
-                auto uv = calculateBlockUV(bid);
+                // Для мультитайлов: разные грани могут использовать разные тайлы.
+                auto uv_top = calculateTileUV(getBlockTileIndex(bid, 2));    // +Y
+                auto uv_bottom = calculateTileUV(getBlockTileIndex(bid, 3)); // -Y
+                auto uv_side = calculateTileUV(getBlockTileIndex(bid, 0));   // боковые грани (используем face 0 как representative)
                 float x0 = x, x1 = x + 1;
                 float y0 = y, y1 = y + 1;
                 float z0 = z, z1 = z + 1;
@@ -226,35 +259,35 @@ inline void buildChunkMesh(const ChunkData& data,
                 // Каждая грань создаётся только если сосед — воздух (!isSolid)
                 // Вершины задаются в CCW-порядке относительно внешней нормали
                 
-                // +X (правая грань, нормаль (1,0,0))
+                // +X (правая грань, нормаль (1,0,0)) — боковая грань
                 if (!isSolid(x + 1, y, z)) addFace(
-                    {x1, y0, z0, uv[0], uv[1]}, {x1, y1, z0, uv[0], uv[3]},
-                    {x1, y1, z1, uv[2], uv[3]}, {x1, y0, z1, uv[2], uv[1]});
+                    {x1, y0, z0, uv_side[0], uv_side[1]}, {x1, y1, z0, uv_side[0], uv_side[3]},
+                    {x1, y1, z1, uv_side[2], uv_side[3]}, {x1, y0, z1, uv_side[2], uv_side[1]});
                 
-                // -X (левая грань, нормаль (-1,0,0))
+                // -X (левая грань, нормаль (-1,0,0)) — боковая грань
                 if (!isSolid(x - 1, y, z)) addFace(
-                    {x0, y0, z1, uv[2], uv[1]}, {x0, y1, z1, uv[2], uv[3]},
-                    {x0, y1, z0, uv[0], uv[3]}, {x0, y0, z0, uv[0], uv[1]});
+                    {x0, y0, z1, uv_side[2], uv_side[1]}, {x0, y1, z1, uv_side[2], uv_side[3]},
+                    {x0, y1, z0, uv_side[0], uv_side[3]}, {x0, y0, z0, uv_side[0], uv_side[1]});
                  
-                // +Y (верхняя грань, нормаль (0,1,0))
+                // +Y (верхняя грань, нормаль (0,1,0)) — верхняя текстура
                 if (!isSolid(x, y + 1, z)) addFace(
-                    {x0, y1, z1, uv[0], uv[3]}, {x1, y1, z1, uv[2], uv[3]},
-                    {x1, y1, z0, uv[2], uv[1]}, {x0, y1, z0, uv[0], uv[1]});
+                    {x0, y1, z1, uv_top[0], uv_top[3]}, {x1, y1, z1, uv_top[2], uv_top[3]},
+                    {x1, y1, z0, uv_top[2], uv_top[1]}, {x0, y1, z0, uv_top[0], uv_top[1]});
                 
-                // -Y (нижняя грань, нормаль (0,-1,0))
+                // -Y (нижняя грань, нормаль (0,-1,0)) — нижняя текстура
                 if (!isSolid(x, y - 1, z)) addFace(
-                    {x0, y0, z0, uv[0], uv[3]}, {x1, y0, z0, uv[2], uv[3]},
-                    {x1, y0, z1, uv[2], uv[1]}, {x0, y0, z1, uv[0], uv[1]});
+                    {x0, y0, z0, uv_bottom[0], uv_bottom[3]}, {x1, y0, z0, uv_bottom[2], uv_bottom[3]},
+                    {x1, y0, z1, uv_bottom[2], uv_bottom[1]}, {x0, y0, z1, uv_bottom[0], uv_bottom[1]});
                 
-                // +Z (передняя грань, нормаль (0,0,1))
+                // +Z (передняя грань, нормаль (0,0,1)) — боковая грань
                 if (!isSolid(x, y, z + 1)) addFace(
-                    {x0, y0, z1, uv[0], uv[1]}, {x1, y0, z1, uv[2], uv[1]},
-                    {x1, y1, z1, uv[2], uv[3]}, {x0, y1, z1, uv[0], uv[3]});
+                    {x0, y0, z1, uv_side[0], uv_side[1]}, {x1, y0, z1, uv_side[2], uv_side[1]},
+                    {x1, y1, z1, uv_side[2], uv_side[3]}, {x0, y1, z1, uv_side[0], uv_side[3]});
                 
-                // -Z (задняя грань, нормаль (0,0,-1))
+                // -Z (задняя грань, нормаль (0,0,-1)) — боковая грань
                 if (!isSolid(x, y, z - 1)) addFace(
-                    {x1, y0, z0, uv[2], uv[1]}, {x0, y0, z0, uv[0], uv[1]},
-                    {x0, y1, z0, uv[0], uv[3]}, {x1, y1, z0, uv[2], uv[3]});
+                    {x1, y0, z0, uv_side[2], uv_side[1]}, {x0, y0, z0, uv_side[0], uv_side[1]},
+                    {x0, y1, z0, uv_side[0], uv_side[3]}, {x1, y1, z0, uv_side[2], uv_side[3]});
             }
 }
 
