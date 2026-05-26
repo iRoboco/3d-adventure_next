@@ -167,10 +167,10 @@ bool GameScene::init()
             break;
         }
     });
-    _raycaster->setOnMiss([this]() {
-    // Можно скрыть HUD-подсказку
-    });
     this->addChild(_raycaster);
+
+    // Передаём рейкастер в контроллер для обработки взаимодействия
+    _playerController->setRaycaster(_raycaster);
 
     // Включаем обработку клавиатуры для перезапуска уровня
     auto listener          = ax::EventListenerKeyboard::create();
@@ -186,8 +186,6 @@ bool GameScene::init()
 
     return true;
 }
-
-
 
 // =========================================================================
 //  onEnter

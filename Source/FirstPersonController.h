@@ -138,6 +138,12 @@ public:
      */
     void setRaycaster(VoxelRaycasterNode* raycaster) { _raycaster = raycaster; }
 
+    // ========================================================================
+    /** @name Взаимодействие с блоками (перенесено из GameScene)
+    *  @{ */
+    // ========================================================================
+    void processBlockInteraction(float dt);
+    /// @}
 
     /// @} // конец группы "Интеграция с миром"
     
@@ -419,7 +425,10 @@ private:
     ChunkManager* _chunkMgr = nullptr; ///< Ссылка на менеджер чанков для запросов блоков
     ///< Используется только для чтения: getBlockAtWorldPos(), isChunkActive()
 
-    VoxelRaycasterNode* _raycaster = nullptr; ///< Cсылка на рейкастер для редактирования мира 
+    VoxelRaycasterNode* _raycaster = nullptr; ///< Ссылка на рейкастер (не владеет)
+    BlockId             _selectedBlockId = BLOCK_STONE; ///< ID блока для установки
+    float               _breakAccum = 0.0f;             ///< Накопленное время удержания ЛКМ
+    static constexpr float BREAK_TIME = 0.8f;           ///< Секунд до разрушения блока
 
     /// @} // конец группы "Интеграция с миром"
 };

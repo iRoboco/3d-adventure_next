@@ -57,7 +57,8 @@ bool FirstPersonController::init(ax::Camera* camera, float moveSpeed, float mous
 
     setupEventListeners();
     setFreeFlightMode(false);
-    scheduleUpdate();
+    // Приоритет 0: выполняется ПЕРВЫМ, чтобы позиция камеры обновилась до каста луча в рейкастере
+    scheduleUpdateWithPriority(0);
     return true;
 }
 
@@ -321,6 +322,9 @@ void FirstPersonController::update(float dt)
         _capsule.bottomPos = newPos - ax::Vec3(0, _capsule.height * 0.85f, 0);
         this->setPosition3D(_capsule.bottomPos);
     }
+
+    // Обработка таймингов разрушения и переключения режимов (вызывается после физики)
+    processBlockInteraction(dt);
 }
 
 // =========================================================================
@@ -330,8 +334,42 @@ void FirstPersonController::setupEventListeners()
 {
     _mouseListener = ax::EventListenerMouse::create();
     _mouseListener->onMouseMove = [this](auto* event) { this->onMouseMove(event); return true; };
-    _mouseListener->onMouseDown = [this](auto* event) { this->onMouseDown(event); return true; };
-    _mouseListener->onMouseUp = [this](auto* event) { this->onMouseUp(event); return true; };
+    _mouseListener->onMouseDown = [this](auto* event) {
+        auto* e = static_cast<ax::EventMouse*>(event);
+        // ЛКМ в freeFlight — только для вращения камеры
+        if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_LEFT && _freeFlightMode) {
+            _isLeftMousePressed = true;
+            _lastMousePos.set(e->getCursorX(), e->getCursorY());
+        }
+        // В режиме FPS LMB/RMB управляются через VoxelRaycaster
+        if (!_freeFlightMode && _raycaster) {
+            if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_LEFT) {
+                _raycaster->setInteractionMode(BlockInteractionMode::BreakHold);
+                _breakAccum = 0.0f;
+                _raycaster->setBreakProgress(0.0f);
+            } else if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_RIGHT) {
+                _raycaster->setInteractionMode(BlockInteractionMode::PlaceIntent);
+            }
+        }
+        return true;
+    };
+    _mouseListener->onMouseUp = [this](auto* event) {
+        auto* e = static_cast<ax::EventMouse*>(event);
+        if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_LEFT) {
+            _isLeftMousePressed = false;
+            if (!_freeFlightMode && _raycaster) {
+                _raycaster->setInteractionMode(BlockInteractionMode::Look);
+                _breakAccum = 0.0f;
+                _raycaster->setBreakProgress(0.0f);
+            }
+        } else if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_RIGHT) {
+            if (!_freeFlightMode && _raycaster) {
+                _raycaster->placeBlock(_selectedBlockId);
+                _raycaster->setInteractionMode(BlockInteractionMode::Look);
+            }
+        }
+        return true;
+    };
     // Mouse listener привязан к scene graph — снимается автоматически при удалении ноды
     _eventDispatcher->addEventListenerWithSceneGraphPriority(_mouseListener, this);
 
@@ -430,6 +468,10 @@ void FirstPersonController::onKeyPressed(ax::EventKeyboard::KeyCode code, ax::Ev
         case ax::EventKeyboard::KeyCode::KEY_D: _keyD = true; break;
         case ax::EventKeyboard::KeyCode::KEY_SPACE: _keySpace = true; break;
         case ax::EventKeyboard::KeyCode::KEY_F5: toggleFlightMode(); break;
+        // Цифры 1-3 — выбор блока для установки
+        case ax::EventKeyboard::KeyCode::KEY_1: _selectedBlockId = BLOCK_STONE; break;
+        case ax::EventKeyboard::KeyCode::KEY_2: _selectedBlockId = BLOCK_DIRT;  break;
+        case ax::EventKeyboard::KeyCode::KEY_3: _selectedBlockId = BLOCK_GRASS; break;
         default: break;
     }
 }
@@ -444,5 +486,34 @@ void FirstPersonController::onKeyReleased(ax::EventKeyboard::KeyCode code, ax::E
         case ax::EventKeyboard::KeyCode::KEY_D: _keyD = false; break;
         case ax::EventKeyboard::KeyCode::KEY_SPACE: _keySpace = false; break;
         default: break;
+    }
+}
+
+// =========================================================================
+//  processBlockInteraction — накопление прогресса разрушения
+// =========================================================================
+void FirstPersonController::processBlockInteraction(float dt)
+{
+    // Быстрый выход если рейкастер не инициализирован или не в режиме разрушения
+    if (!_raycaster || _raycaster->getInteractionMode() != BlockInteractionMode::BreakHold) {
+        return;
+    }
+
+    // Если луч никуда не попал — прогресс не копится
+    if (!_raycaster->hasHit()) {
+        _breakAccum = 0.0f;
+        _raycaster->setBreakProgress(0.0f);
+        return;
+    }
+
+    _breakAccum += dt;
+    float progress = std::min(_breakAccum / BREAK_TIME, 1.0f);
+    _raycaster->setBreakProgress(progress);
+
+    // Прогресс достиг 100% → разрушаем блок
+    if (progress >= 1.0f) {
+        _raycaster->breakBlock();
+        _breakAccum = 0.0f;
+        _raycaster->setBreakProgress(0.0f);
     }
 }

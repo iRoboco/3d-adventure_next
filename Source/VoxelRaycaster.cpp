@@ -56,7 +56,8 @@ bool VoxelRaycasterNode::init(ax::Camera* camera, ChunkManager* mgr, float maxDi
         image->release();
     }
 
-    scheduleUpdate();
+    // Приоритет 1: выполняется ВТОРЫМ, после обновления позиции камеры в FPC (приоритет 0)
+    scheduleUpdateWithPriority(1);
     return true;
 }
 
