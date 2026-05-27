@@ -1,13 +1,6 @@
 /**
  * @file VoxelRaycaster.cpp
- * @brief Реализация с MeshRenderer подсветкой (ВАРИАНТ 4 + 2)
- *
- * Ключевое изменение: вместо DrawNode (2D API) используем MeshRenderer (3D pipeline).
- * Это гарантирует:
- * - Корректную отрисовку в 3D сцене с CameraFlag::USER1
- * - Правильное z-buffer тестирование (no z-fighting при настройке)
- * - Возможность wireframe через _wireframe = true
- * - Прозрачность через BlendFunc и материал
+ * @brief Реализация intent-driven подсветки с MeshRenderer
  */
 
 #include "VoxelRaycaster.h"
@@ -56,12 +49,27 @@ bool VoxelRaycasterNode::init(ax::Camera* camera, ChunkManager* mgr, float maxDi
         image->release();
     }
 
-    scheduleUpdate();
+    scheduleUpdateWithPriority(1);
     return true;
 }
 
+void VoxelRaycasterNode::setInteractionMode(BlockInteractionMode mode)
+{
+    if (_mode == mode)
+        return;
+    _mode = mode;
+
+    if (_mode != BlockInteractionMode::PlaceIntent)
+        hidePlacePreview();
+    if (_mode != BlockInteractionMode::BreakHold)
+    {
+        hideBreakProgress();
+        _breakProgress = 0.0f;  // [FIX #4] Явный сброс прогресса при смене режима
+    }
+}
+
 // ============================================================================
-//  update
+//  update — главный цикл с ветвлением по режиму
 // ============================================================================
 
 void VoxelRaycasterNode::update(float /*dt*/)
@@ -75,51 +83,59 @@ void VoxelRaycasterNode::update(float /*dt*/)
 
     _lastHit = VoxelRay::castWorld(eye, forward, _maxDist, _mgr);
 
-    if (_lastHit.has_value())
+    if (!_lastHit.has_value() || _lastHit->t == 0.0f)
     {
-        rebuildHighlight(*_lastHit);
-    }
-    else
-    {
-        hideHighlight();
-    }
-
-    if (_lastHit.has_value())
-    {
-        if (_onHit)
-            _onHit(*_lastHit);
-    }
-    else
-    {
+        hideAll();
         if (_onMiss)
             _onMiss();
+        // [FIX #6] Сбрасываем кэш при промахе
+        _faceHighlightDirty = true;
+        return;
     }
+
+    const VoxelHit& hit = *_lastHit;
+
+    // Highlight грани — всегда при хите
+    updateFaceHighlight(hit);
+
+    // Остальной фидбек — по режиму
+    switch (_mode)
+    {
+    case BlockInteractionMode::Look:
+        hidePlacePreview();
+        hideBreakProgress();
+        break;
+
+    case BlockInteractionMode::PlaceIntent:
+        updatePlacePreview(hit);
+        hideBreakProgress();
+        break;
+
+    case BlockInteractionMode::BreakHold:
+        hidePlacePreview();
+        updateBreakProgress(hit);
+        break;
+    }
+
+    if (_onHit)
+        _onHit(hit);
 }
 
 // ============================================================================
-//  createSingleBlockMesh — ядро ВАРИАНТА 4
+//  Меш-билдинг: highlight грани (тонкий блок со смещением)
 // ============================================================================
-//
-// Переиспользуем логику ChunkMeshBuilder для создания меша ОДНОГО блока.
-// Это консистентно с миром — те же UV, те же нормали, тот же pipeline.
 
-ax::Mesh* VoxelRaycasterNode::createSingleBlockMesh(BlockId blockId, const ax::Vec3& offset, float scale)
+ax::Mesh* VoxelRaycasterNode::createFaceHighlightMesh(const VoxelHit& hit)
 {
-    // Создаём фейковый ChunkData с одним блоком
-    // Для этого используем прямой подход: генерируем 6 граней вручную
-    // (упрощённо, без face culling — нам нужны ВСЕ грани для highlight)
+    if (hit.normal == Vec3::ZERO)
+        return nullptr;
+
+    Vec3 offset(static_cast<float>(hit.bx) + hit.normal.x * 0.002f, static_cast<float>(hit.by) + hit.normal.y * 0.002f,
+                static_cast<float>(hit.bz) + hit.normal.z * 0.002f);
 
     std::vector<ChunkVertex> verts;
     ax::IndexArray inds;
 
-    auto uv     = calculateBlockUV(blockId);
-    float tileU = uv[0], tileV = uv[1], tileU2 = uv[2], tileV2 = uv[3];
-
-    float x0 = offset.x, x1 = offset.x + scale;
-    float y0 = offset.y, y1 = offset.y + scale;
-    float z0 = offset.z, z1 = offset.z + scale;
-
-    // Лямбда для добавления грани (4 вершины + 6 индексов)
     auto addFace = [&](const ChunkVertex& v0, const ChunkVertex& v1, const ChunkVertex& v2, const ChunkVertex& v3) {
         uint16_t baseIdx = static_cast<uint16_t>(verts.size());
         verts.insert(verts.end(), {v0, v1, v2, v3});
@@ -131,159 +147,270 @@ ax::Mesh* VoxelRaycasterNode::createSingleBlockMesh(BlockId blockId, const ax::V
         inds.emplace_back<uint16_t>(baseIdx + 3);
     };
 
-    // +X грань
-    addFace({x1, y0, z0, tileU, tileV}, {x1, y1, z0, tileU, tileV2}, {x1, y1, z1, tileU2, tileV2},
-            {x1, y0, z1, tileU2, tileV});
-    // -X грань
-    addFace({x0, y0, z1, tileU2, tileV}, {x0, y1, z1, tileU2, tileV2}, {x0, y1, z0, tileU, tileV2},
-            {x0, y0, z0, tileU, tileV});
-    // +Y грань
-    addFace({x0, y1, z1, tileU, tileV2}, {x1, y1, z1, tileU2, tileV2}, {x1, y1, z0, tileU2, tileV},
-            {x0, y1, z0, tileU, tileV});
-    // -Y грань
-    addFace({x0, y0, z0, tileU, tileV2}, {x1, y0, z0, tileU2, tileV2}, {x1, y0, z1, tileU2, tileV},
-            {x0, y0, z1, tileU, tileV});
-    // +Z грань
-    addFace({x0, y0, z1, tileU, tileV}, {x1, y0, z1, tileU2, tileV}, {x1, y1, z1, tileU2, tileV2},
-            {x0, y1, z1, tileU, tileV2});
-    // -Z грань
-    addFace({x1, y0, z0, tileU2, tileV}, {x0, y0, z0, tileU, tileV}, {x0, y1, z0, tileU, tileV2},
-            {x1, y1, z0, tileU2, tileV2});
+    float u = 0.0f, v = 0.0f, u2 = 1.0f, v2 = 1.0f;
+
+    float x0 = offset.x, x1 = offset.x + 1.0f;
+    float y0 = offset.y, y1 = offset.y + 1.0f;
+    float z0 = offset.z, z1 = offset.z + 1.0f;
+
+    const float e = 0.001f;
+    if (hit.normal.x > 0.5f)
+    {  // +X
+        addFace({x1 + e, y0 - e, z0 - e, u, v}, {x1 + e, y1 + e, z0 - e, u, v2}, {x1 + e, y1 + e, z1 + e, u2, v2},
+                {x1 + e, y0 - e, z1 + e, u2, v});
+    }
+    else if (hit.normal.x < -0.5f)
+    {  // -X
+        addFace({x0 - e, y0 - e, z1 + e, u2, v}, {x0 - e, y1 + e, z1 + e, u2, v2}, {x0 - e, y1 + e, z0 - e, u, v2},
+                {x0 - e, y0 - e, z0 - e, u, v});
+    }
+    else if (hit.normal.y > 0.5f)
+    {  // +Y
+        addFace({x0 - e, y1 + e, z1 + e, u, v2}, {x1 + e, y1 + e, z1 + e, u2, v2}, {x1 + e, y1 + e, z0 - e, u2, v},
+                {x0 - e, y1 + e, z0 - e, u, v});
+    }
+    else if (hit.normal.y < -0.5f)
+    {  // -Y
+        addFace({x0 - e, y0 - e, z0 - e, u, v2}, {x1 + e, y0 - e, z0 - e, u2, v2}, {x1 + e, y0 - e, z1 + e, u2, v},
+                {x0 - e, y0 - e, z1 + e, u, v});
+    }
+    else if (hit.normal.z > 0.5f)
+    {  // +Z
+        addFace({x0 - e, y0 - e, z1 + e, u, v}, {x1 + e, y0 - e, z1 + e, u2, v}, {x1 + e, y1 + e, z1 + e, u2, v2},
+                {x0 - e, y1 + e, z1 + e, u, v2});
+    }
+    else
+    {  // -Z
+        addFace({x1 + e, y0 - e, z0 - e, u2, v}, {x0 - e, y0 - e, z0 - e, u, v}, {x0 - e, y1 + e, z0 - e, u, v2},
+                {x1 + e, y1 + e, z0 - e, u2, v2});
+    }
 
     return createMesh(verts, inds, _terrainAtlas);
 }
 
 // ============================================================================
-//  createFaceHighlightMesh — ВАРИАНТ 4: прозрачная грань как "блок"
-// ============================================================================
-//
-// Вместо квада рисуем ТОНКИЙ БЛОК (scale = 1.0f, но смещённый на 0.001 от грани).
-// Это даёт корректное поведение z-buffer и освещение.
-
-ax::Mesh* VoxelRaycasterNode::createFaceHighlightMesh(const VoxelHit& hit)
-{
-    if (hit.normal == Vec3::ZERO)
-        return nullptr;
-
-    // Позиция "блока" = позиция целевого блока + нормаль * epsilon
-    // Но мы рисуем ПОЛНЫЙ блок, просто смещённый — это проще чем квад
-    Vec3 offset(static_cast<float>(hit.bx) + hit.normal.x * 0.001f, static_cast<float>(hit.by) + hit.normal.y * 0.001f,
-                static_cast<float>(hit.bz) + hit.normal.z * 0.001f);
-
-    // Масштаб чуть больше 1 чтобы перекрыть грань целевого блока
-    float scale = 1.002f;
-
-    return createSingleBlockMesh(BLOCK_STONE, offset, scale);  // BLOCK_STONE = любая текстура, будет tinted
-}
-
-// ============================================================================
-//  createPlacePreviewMesh — ВАРИАНТ 4: preview блока для установки
+//  Меш-билдинг: preview блока для установки
 // ============================================================================
 
 ax::Mesh* VoxelRaycasterNode::createPlacePreviewMesh(const VoxelHit& hit)
 {
-    if (hit.normal == Vec3::ZERO)
-        return nullptr;
-
     Vec3 offset(static_cast<float>(hit.adjX()), static_cast<float>(hit.adjY()), static_cast<float>(hit.adjZ()));
 
-    return createSingleBlockMesh(BLOCK_STONE, offset, 1.0f);
+    std::vector<ChunkVertex> verts;
+    ax::IndexArray inds;
+
+    auto addFace = [&](const ChunkVertex& v0, const ChunkVertex& v1, const ChunkVertex& v2, const ChunkVertex& v3) {
+        uint16_t baseIdx = static_cast<uint16_t>(verts.size());
+        verts.insert(verts.end(), {v0, v1, v2, v3});
+        inds.emplace_back<uint16_t>(baseIdx + 0);
+        inds.emplace_back<uint16_t>(baseIdx + 1);
+        inds.emplace_back<uint16_t>(baseIdx + 2);
+        inds.emplace_back<uint16_t>(baseIdx + 0);
+        inds.emplace_back<uint16_t>(baseIdx + 2);
+        inds.emplace_back<uint16_t>(baseIdx + 3);
+    };
+
+    float u = 0.0f, v = 0.0f, u2 = 1.0f, v2 = 1.0f;
+    float x0 = offset.x, x1 = offset.x + 1.0f;
+    float y0 = offset.y, y1 = offset.y + 1.0f;
+    float z0 = offset.z, z1 = offset.z + 1.0f;
+
+    addFace({x1, y0, z0, u, v}, {x1, y1, z0, u, v2}, {x1, y1, z1, u2, v2}, {x1, y0, z1, u2, v});
+    addFace({x0, y0, z1, u2, v}, {x0, y1, z1, u2, v2}, {x0, y1, z0, u, v2}, {x0, y0, z0, u, v});
+    addFace({x0, y1, z1, u, v2}, {x1, y1, z1, u2, v2}, {x1, y1, z0, u2, v}, {x0, y1, z0, u, v});
+    addFace({x0, y0, z0, u, v2}, {x1, y0, z0, u2, v2}, {x1, y0, z1, u2, v}, {x0, y0, z1, u, v});
+    addFace({x0, y0, z1, u, v}, {x1, y0, z1, u2, v}, {x1, y1, z1, u2, v2}, {x0, y1, z1, u, v2});
+    addFace({x1, y0, z0, u2, v}, {x0, y0, z0, u, v}, {x0, y1, z0, u, v2}, {x1, y1, z0, u2, v2});
+
+    return createMesh(verts, inds, _terrainAtlas);
 }
 
 // ============================================================================
-//  createFaceWireMesh — ВАРИАНТ 2: wireframe через MeshRenderer::_wireframe
+//  Меш-билдинг: прогресс разрушения (заполняющаяся грань)
 // ============================================================================
-//
-// Создаём тот же меш, но будем рендерить с _wireframe = true.
-// Это даёт линейный контур вокруг грани.
 
-ax::Mesh* VoxelRaycasterNode::createFaceWireMesh(const VoxelHit& hit)
+ax::Mesh* VoxelRaycasterNode::createBreakProgressMesh(const VoxelHit& hit, float progress)
 {
-    // Для wireframe используем тот же меш — рендер в линейном режиме
-    // Axmol поддерживает wireframe через MeshRenderer::setWireframe(true)
-    return createFaceHighlightMesh(hit);
+    if (progress <= 0.0f)
+        return nullptr;
+
+    Vec3 center(static_cast<float>(hit.bx) + 0.5f + hit.normal.x * 0.003f,
+                static_cast<float>(hit.by) + 0.5f + hit.normal.y * 0.003f,
+                static_cast<float>(hit.bz) + 0.5f + hit.normal.z * 0.003f);
+
+    float s = progress;
+
+    std::vector<ChunkVertex> verts;
+    ax::IndexArray inds;
+
+    float u = 0.0f, v = 0.0f, u2 = 1.0f, v2 = 1.0f;
+
+    Vec3 right, up;
+    if (std::abs(hit.normal.x) > 0.5f)
+    {
+        right = Vec3(0, 0, 1);
+        up    = Vec3(0, 1, 0);
+    }
+    else if (std::abs(hit.normal.y) > 0.5f)
+    {
+        right = Vec3(1, 0, 0);
+        up    = Vec3(0, 0, 1);
+    }
+    else
+    {
+        right = Vec3(1, 0, 0);
+        up    = Vec3(0, 1, 0);
+    }
+
+    Vec3 p0 = center - right * (0.5f * s) - up * (0.5f * s);
+    Vec3 p1 = center + right * (0.5f * s) - up * (0.5f * s);
+    Vec3 p2 = center + right * (0.5f * s) + up * (0.5f * s);
+    Vec3 p3 = center - right * (0.5f * s) + up * (0.5f * s);
+
+    p0 += hit.normal * 0.001f;
+    p1 += hit.normal * 0.001f;
+    p2 += hit.normal * 0.001f;
+    p3 += hit.normal * 0.001f;
+
+    verts.push_back({p0.x, p0.y, p0.z, u, v});
+    verts.push_back({p1.x, p1.y, p1.z, u2, v});
+    verts.push_back({p2.x, p2.y, p2.z, u2, v2});
+    verts.push_back({p3.x, p3.y, p3.z, u, v2});
+
+    inds.emplace_back<uint16_t>(0);
+    inds.emplace_back<uint16_t>(1);
+    inds.emplace_back<uint16_t>(2);
+    inds.emplace_back<uint16_t>(0);
+    inds.emplace_back<uint16_t>(2);
+    inds.emplace_back<uint16_t>(3);
+
+    return createMesh(verts, inds, _terrainAtlas);
 }
 
 // ============================================================================
-//  rebuildHighlight — сборка MeshRenderer'ов
+//  Обновление рендереров
 // ============================================================================
 
-void VoxelRaycasterNode::rebuildHighlight(const VoxelHit& hit)
+void VoxelRaycasterNode::updateFaceHighlight(const VoxelHit& hit)
 {
-    // Удаляем старые renderer'ы
-    hideHighlight();
+    // [FIX #6] Пересоздаём меш только если блок изменился
+    bool sameBlock = _faceHighlightRenderer && _lastFaceHighlightHit.bx == hit.bx &&
+                     _lastFaceHighlightHit.by == hit.by && _lastFaceHighlightHit.bz == hit.bz &&
+                     _lastFaceHighlightHit.normal == hit.normal;
+    if (sameBlock)
+        return;
 
-    // === Подсветка грани (ВАРИАНТ 4: прозрачный tinted блок) ===
+    hideFaceHighlight();
+
     if (auto* mesh = createFaceHighlightMesh(hit))
     {
         _faceHighlightRenderer = MeshRenderer::create();
         _faceHighlightRenderer->addMesh(mesh);
         _faceHighlightRenderer->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
 
-        // Материал: UNLIT с прозрачностью + tint цветом
         auto* material = MeshMaterial::createBuiltInMaterial(MeshMaterial::MaterialType::UNLIT, false);
         if (material)
         {
-            // Настройка прозрачности через BlendFunc
             BlendFunc blend;
             blend.src = backend::BlendFactor::SRC_ALPHA;
             blend.dst = backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
-            material->setStateBlock(material->getStateBlock());
             material->getStateBlock().setBlendFunc(blend);
-            material->getStateBlock().setDepthWrite(false);  // Прозрачные объекты не пишут в depth
-
-            // Применяем tint цветом через setColor (Color3B) и setOpacity для альфа-канала
-            _faceHighlightRenderer->setColor(ax::Color3B(static_cast<uint8_t>(_faceColor.r * 255),
-                                                         static_cast<uint8_t>(_faceColor.g * 255),
-                                                         static_cast<uint8_t>(_faceColor.b * 255)));
-            _faceHighlightRenderer->setOpacity(static_cast<uint8_t>(_faceColor.a * 255));
+            material->getStateBlock().setDepthWrite(false);
+            material->getStateBlock().setDepthTest(true);
         }
         _faceHighlightRenderer->setMaterial(material);
-
-        // ВАРИАНТ 2: включаем wireframe для контурного эффекта
-        // _faceHighlightRenderer->setWireframe(true); // Раскомментировать для wireframe-only
+        _faceHighlightRenderer->setColor(ax::Color3B(static_cast<uint8_t>(_faceColor.r * 255),
+                                                     static_cast<uint8_t>(_faceColor.g * 255),
+                                                     static_cast<uint8_t>(_faceColor.b * 255)));
+        _faceHighlightRenderer->setOpacity(static_cast<uint8_t>(_faceColor.a * 255));  // Alpha отдельно
 
         this->addChild(_faceHighlightRenderer);
-    }
-
-    // === Preview блока для установки ===
-    if (_previewVisible)
-    {
-        if (auto* mesh = createPlacePreviewMesh(hit))
-        {
-            _placePreviewRenderer = MeshRenderer::create();
-            _placePreviewRenderer->addMesh(mesh);
-            _placePreviewRenderer->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
-
-            auto* material = MeshMaterial::createBuiltInMaterial(MeshMaterial::MaterialType::UNLIT, false);
-            if (material)
-            {
-                BlendFunc blend;
-                blend.src = backend::BlendFactor::SRC_ALPHA;
-                blend.dst = backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
-                material->getStateBlock().setBlendFunc(blend);
-                material->getStateBlock().setDepthWrite(false);
-
-                // Применяем tint цветом через setColor (Color3B) и setOpacity для альфа-канала
-                _placePreviewRenderer->setColor(ax::Color3B(static_cast<uint8_t>(_previewColor.r * 255),
-                                                            static_cast<uint8_t>(_previewColor.g * 255),
-                                                            static_cast<uint8_t>(_previewColor.b * 255)));
-                _placePreviewRenderer->setOpacity(static_cast<uint8_t>(_previewColor.a * 255));
-            }
-            _placePreviewRenderer->setMaterial(material);
-
-            this->addChild(_placePreviewRenderer);
-        }
+        _lastFaceHighlightHit = hit;  // [FIX #6] Обновляем кэш
     }
 }
 
-void VoxelRaycasterNode::hideHighlight()
+void VoxelRaycasterNode::updatePlacePreview(const VoxelHit& hit)
+{
+    // [FIX #1] Проверка видимости превью
+    if (!_placePreviewVisible)
+        return;
+
+    hidePlacePreview();
+
+    if (auto* mesh = createPlacePreviewMesh(hit))
+    {
+        _placePreviewRenderer = MeshRenderer::create();
+        _placePreviewRenderer->addMesh(mesh);
+        _placePreviewRenderer->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
+
+        auto* material = MeshMaterial::createBuiltInMaterial(MeshMaterial::MaterialType::UNLIT, false);
+        if (material)
+        {
+            BlendFunc blend;
+            blend.src = backend::BlendFactor::SRC_ALPHA;
+            blend.dst = backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
+            material->getStateBlock().setBlendFunc(blend);
+            material->getStateBlock().setDepthWrite(false);
+            material->getStateBlock().setDepthTest(true);
+        }
+        _placePreviewRenderer->setMaterial(material);
+        _placePreviewRenderer->setColor(ax::Color3B(static_cast<uint8_t>(_previewColor.r * 255),
+                                                    static_cast<uint8_t>(_previewColor.g * 255),
+                                                    static_cast<uint8_t>(_previewColor.b * 255)));
+        _placePreviewRenderer->setOpacity(static_cast<uint8_t>(_previewColor.a * 255));
+
+        this->addChild(_placePreviewRenderer);
+    }
+}
+
+void VoxelRaycasterNode::updateBreakProgress(const VoxelHit& hit)
+{
+    hideBreakProgress();
+
+    if (_breakProgress <= 0.0f)
+        return;
+
+    if (auto* mesh = createBreakProgressMesh(hit, _breakProgress))
+    {
+        _breakProgressRenderer = MeshRenderer::create();
+        _breakProgressRenderer->addMesh(mesh);
+        _breakProgressRenderer->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
+
+        auto* material = MeshMaterial::createBuiltInMaterial(MeshMaterial::MaterialType::UNLIT, false);
+        if (material)
+        {
+            BlendFunc blend;
+            blend.src = backend::BlendFactor::SRC_ALPHA;
+            blend.dst = backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
+            material->getStateBlock().setBlendFunc(blend);
+            material->getStateBlock().setDepthWrite(false);
+            material->getStateBlock().setDepthTest(true);
+        }
+        _breakProgressRenderer->setMaterial(material);
+        _breakProgressRenderer->setColor(ax::Color3B(static_cast<uint8_t>(_breakColor.r * 255),
+                                                     static_cast<uint8_t>(_breakColor.g * 255),
+                                                     static_cast<uint8_t>(_breakColor.b * 255)));
+        _breakProgressRenderer->setOpacity(static_cast<uint8_t>(_breakColor.a * 255));
+
+        this->addChild(_breakProgressRenderer);
+    }
+}
+
+// ============================================================================
+//  Скрытие рендереров
+// ============================================================================
+
+void VoxelRaycasterNode::hideFaceHighlight()
 {
     if (_faceHighlightRenderer)
     {
         _faceHighlightRenderer->removeFromParentAndCleanup(true);
         _faceHighlightRenderer = nullptr;
     }
+}
+
+void VoxelRaycasterNode::hidePlacePreview()
+{
     if (_placePreviewRenderer)
     {
         _placePreviewRenderer->removeFromParentAndCleanup(true);
@@ -291,17 +418,25 @@ void VoxelRaycasterNode::hideHighlight()
     }
 }
 
-// ============================================================================
-//  cameraForward / breakBlock / placeBlock
-// ============================================================================
-
-Vec3 VoxelRaycasterNode::cameraForward(const ax::Camera* cam)
+void VoxelRaycasterNode::hideBreakProgress()
 {
-    const Mat4& m = cam->getNodeToWorldTransform();
-    Vec3 fwd(-m.m[8], -m.m[9], -m.m[10]);
-    fwd.normalize();
-    return fwd;
+    if (_breakProgressRenderer)
+    {
+        _breakProgressRenderer->removeFromParentAndCleanup(true);
+        _breakProgressRenderer = nullptr;
+    }
 }
+
+void VoxelRaycasterNode::hideAll()
+{
+    hideFaceHighlight();
+    hidePlacePreview();
+    hideBreakProgress();
+}
+
+// ============================================================================
+//  Действия
+// ============================================================================
 
 bool VoxelRaycasterNode::breakBlock()
 {
@@ -319,6 +454,7 @@ bool VoxelRaycasterNode::breakBlock()
     {
         AXLOG("[VoxelRaycaster] breakBlock at (%d, %d, %d) id=%u — OK", h.bx, h.by, h.bz,
               static_cast<unsigned>(h.blockId));
+        _breakProgress = 0.0f;
     }
     return ok;
 }
@@ -333,6 +469,19 @@ bool VoxelRaycasterNode::placeBlock(BlockId id)
     if (h.t == 0.0f)
         return false;
 
+    // [FIX #8] Проверка коллизии с капсулой игрока перед установкой блока
+    if (_playerCapsule)
+    {
+        Vec3 bMin(h.adjX(), h.adjY(), h.adjZ());
+        Vec3 bMax = bMin + Vec3(1, 1, 1);
+        Vec3 cMin = _playerCapsule->bottomPos - Vec3(_playerCapsule->radius, 0, _playerCapsule->radius);
+        Vec3 cMax =
+            _playerCapsule->bottomPos + Vec3(_playerCapsule->radius, _playerCapsule->height, _playerCapsule->radius);
+        if (bMin.x < cMax.x && bMax.x > cMin.x && bMin.y < cMax.y && bMax.y > cMin.y && bMin.z < cMax.z &&
+            bMax.z > cMin.z)
+            return false;  // Блок пересекается с игроком
+    }
+
     bool ok = _mgr->setBlockAtWorldPos(h.adjacentCenter(), id);
 
     if (ok)
@@ -341,4 +490,22 @@ bool VoxelRaycasterNode::placeBlock(BlockId id)
               h.adjY(), h.adjZ());
     }
     return ok;
+}
+
+// ============================================================================
+//  Утилиты
+// ============================================================================
+
+// [FIX #7] Унификация вычисления forward-вектора с учетом pitch как в FPC
+Vec3 VoxelRaycasterNode::cameraForward(const ax::Camera* cam)
+{
+    if (!cam)
+        return Vec3(0, 0, -1);
+    float yaw   = AX_DEGREES_TO_RADIANS(cam->getRotation3D().y);
+    float pitch = AX_DEGREES_TO_RADIANS(cam->getRotation3D().x);
+    Vec3 fwd(-std::sinf(yaw), std::sinf(pitch), -std::cosf(yaw));
+    fwd.x *= std::cosf(pitch);
+    fwd.z *= std::cosf(pitch);
+    fwd.normalize();
+    return fwd;
 }

@@ -24,9 +24,9 @@
 #pragma once
 #include "axmol.h"
 #include "VoxelCollisionResolver.h"
+#include "ChunkManager.h" // BlockId и BLOCK_AIR
 #include <memory>
 
-class ChunkManager;
 class VoxelRaycasterNode;
 
 // ============================================================================
@@ -185,7 +185,10 @@ public:
     
     /// @brief Проверка: находится ли игрок на земле
     bool isGrounded() const { return _isGrounded; } ///< Возвращает флаг _isGrounded из последнего resolve()
-    
+
+    /// @brief [FIX #8] Геттер для капсулы игрока
+    const PlayerCapsule& getCapsule() const { return _capsule; }
+
     /// @} // конец группы "Геттеры состояния"
     
     // ========================================================================
@@ -277,11 +280,8 @@ public:
     /// @name Event callbacks — вызываются Axmol EventDispatcher
     /// @{
     
-    /// @brief Обработчик нажатия кнопки мыши (фиксация для look-around)
-    void onMouseDown(ax::Event* event);
-    
-    /// @brief Обработчик отпускания кнопки мыши
-    void onMouseUp(ax::Event* event);
+    /// @note Обработчики нажатия и отпускания кнопок мыши 
+    /// onMouseDown и onMouseUp инкапсулированы в setupEventListeners()
     
     /// @brief Обработчик движения мыши (поворот камеры)
     void onMouseMove(ax::Event* event);
@@ -291,6 +291,9 @@ public:
     
     /// @brief Обработчик отпускания клавиши (сброс флага _key*)
     void onKeyReleased(ax::EventKeyboard::KeyCode code, ax::Event* event);
+
+     /// @brief Обработчик действий с блоками
+    void processBlockInteraction(float dt);
     
     /// @} // конец группы "Event callbacks"
     
@@ -358,6 +361,9 @@ private:
     bool _keyW = false, _keyA = false, _keyS = false, _keyD = false, _keySpace = false;
     ///< Устанавливаются в onKeyPressed/Released, читаются в update()
     /// @}
+
+    float _breakAccum = 0; ///< Накапливание состояния разрушения блока
+    BlockId _selectedBlockId = BLOCK_AIR;
     
     /// @} // конец группы "Конфигурация и состояние"
     
@@ -397,6 +403,9 @@ private:
     float _gravity = -25.0f; ///< Ускорение свободного падения (отрицательное = вниз)
     
     float _jumpForce = 8.0f; ///< Начальная вертикальная скорость при прыжке
+
+    /// @brief Скорость разрушения блока
+    static constexpr float BREAK_TIME = 3.0f;
     
     /// @} // конец группы "Физика и коллизии"
     

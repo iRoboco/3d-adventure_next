@@ -147,7 +147,10 @@ bool GameScene::init()
     _raycaster->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
     _raycaster->setFaceHighlightColor({1.0f, 1.0f, 1.0f, 0.25f});  // Подсветка грани
     _raycaster->setPlacePreviewColor({0.2f, 0.9f, 0.2f, 0.2f});    // Выбор места кубика
-    _raycaster->setPlacePreviewVisible(true);
+    _raycaster->setPlacePreviewVisible(true); // [FIX #1]
+
+    // [FIX #8] Передаем ссылку на капсулу игрока в рейкастер
+    _raycaster->setPlayerCapsule(&_playerController->getCapsule());
 
     // Коллбек при наведении на блок — меняем цвет подсветки по типу блока
     _raycaster->setOnHit([this](const VoxelHit& hit) {
@@ -171,13 +174,15 @@ bool GameScene::init()
     // Можно скрыть HUD-подсказку
     });
     this->addChild(_raycaster);
+    _playerController->setRaycaster(_raycaster);
 
     // Включаем обработку клавиатуры для перезапуска уровня
     auto listener          = ax::EventListenerKeyboard::create();
     listener->onKeyPressed = AX_CALLBACK_2(GameScene::onKeyPressed, this);
     _eventDispatcher->addEventListenerWithSceneGraphPriority(listener, this);
 
-    scheduleUpdate();
+    // [FIX #10] Изменен приоритет, чтобы GameScene::update вызывалась после FPC
+    scheduleUpdateWithPriority(10);
 
     // Сбрасываем _lastPlayerChunk чтобы чанки начали грузиться сразу,
     // а не после первого движения игрока (нажатия клавиши).

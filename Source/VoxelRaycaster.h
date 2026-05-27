@@ -1,30 +1,15 @@
 /**
  * @file VoxelRaycaster.h
- * @brief Воксельный рейкастер с подсветкой грани через MeshRenderer
+ * @brief Воксельный рейкастер с intent-driven подсветкой (паттерн A+C)
  *
- * Архитектура подсветки (4 варианта от экстра до оптимального):
+ * Архитектура:
+ * - VoxelRaycasterNode: только физика луча + рендер фидбека по режиму
+ * - FirstPlayerController: управление режимами, тайминги, игровая логика
  *
- * ВАРИАНТ 1 (Экстра): Кастомный шейдер с glow + пост-процессинг
- *   - Требует: custom .vert/.frag, FrameBuffer, blur pass
- *   - Плюсы: неоновая анимация, bloom
- *   - Минусы: +200 строк, сложность поддержки
- *
- * ВАРИАНТ 2 (Средний): MeshRenderer с wireframe + отдельный прозрачный меш
- *   - Требует: 2 MeshRenderer ноды (wire + solid transparent)
- *   - Плюсы: стандартный pipeline, работает из коробки
- *   - Минусы: 2 draw calls вместо 1
- *
- * ВАРИАНТ 3 (Оптимальный): CustomCommand напрямую в Renderer
- *   - Требует: ручная работа с VBO/IBO, PrimitiveType::LINE_STRIP
- *   - Плюсы: 1 draw call, полный контроль
- *   - Минусы: низкоуровневый, хрупкий при изменениях API
- *
- * ВАРИАНТ 4 (Минимальный): Переиспользование ChunkMeshBuilder
- *   - Требует: buildChunkMesh для 1 блока + прозрачный материал
- *   - Плюсы: 0 нового кода мешбилдинга, консистентность с миром
- *   - Минусы: немного оверхеда от полного меша 1 блока
- *
- * Реализован ВАРИАНТ 4 как основной + ВАРИАНТ 2 для wireframe outline.
+ * Режимы (BlockInteractionMode):
+ *   Look        → только highlight грани
+ *   PlaceIntent → highlight + preview (fade-in при зажатом RMB)
+ *   BreakHold   → highlight + прогресс разрушения (LMB hold)
  */
 
 #pragma once
@@ -35,6 +20,7 @@
 #include <cstdint>
 #include <cmath>
 #include <limits>
+#include <VoxelCollisionResolver.h>
 
 // ============================================================================
 //  VoxelHit
@@ -57,6 +43,13 @@ struct VoxelHit
         return {static_cast<float>(adjX()) + 0.5f, static_cast<float>(adjY()) + 0.5f,
                 static_cast<float>(adjZ()) + 0.5f};
     }
+
+    // [FIX #6] Оператор сравнения для кэширования
+    bool operator==(const VoxelHit& o) const noexcept
+    {
+        return bx == o.bx && by == o.by && bz == o.bz && normal == o.normal;
+    }
+    bool operator!=(const VoxelHit& o) const noexcept { return !(*this == o); }
 };
 
 // ============================================================================
@@ -198,6 +191,7 @@ std::optional<VoxelHit> castRay(const ax::Vec3& origin, const ax::Vec3& dir, flo
     return std::nullopt;
 }
 
+// [FIX #11] Оптимизация двойного getBlockAtWorldPos — кэшируем ID в лямбде
 inline std::optional<VoxelHit> castWorld(const ax::Vec3& origin,
                                          const ax::Vec3& dir,
                                          float maxDistance,
@@ -206,16 +200,21 @@ inline std::optional<VoxelHit> castWorld(const ax::Vec3& origin,
     if (!mgr)
         return std::nullopt;
 
-    auto result = castRay(origin, dir, maxDistance, [mgr](int x, int y, int z) -> bool {
-        return mgr->getBlockAtWorldPos(ax::Vec3{static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f,
-                                                static_cast<float>(z) + 0.5f}) != BLOCK_AIR;
+    BlockId lastSolidId = BLOCK_AIR;  // Кэш ID твердого блока
+    auto result         = castRay(origin, dir, maxDistance, [mgr, &lastSolidId](int x, int y, int z) -> bool {
+        BlockId id = mgr->getBlockAtWorldPos(
+            ax::Vec3{static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f, static_cast<float>(z) + 0.5f});
+        if (id != BLOCK_AIR)
+        {
+            lastSolidId = id;  // Сохраняем ID при первом попадании
+            return true;
+        }
+        return false;
     });
 
     if (result.has_value())
     {
-        result->blockId = mgr->getBlockAtWorldPos(ax::Vec3{static_cast<float>(result->bx) + 0.5f,
-                                                           static_cast<float>(result->by) + 0.5f,
-                                                           static_cast<float>(result->bz) + 0.5f});
+        result->blockId = lastSolidId;  // Используем кэш вместо повторного запроса
     }
     return result;
 }
@@ -242,7 +241,18 @@ uint8_t exposedFaceMask(int bx, int by, int bz, IsSolidFn&& isSolidNeighbor)
 }  // namespace VoxelRay
 
 // ============================================================================
-//  VoxelRaycasterNode — подсветка через MeshRenderer (ВАРИАНТ 4 + 2)
+//  BlockInteractionMode — игровые режимы взаимодействия
+// ============================================================================
+
+enum class BlockInteractionMode
+{
+    Look,         ///< Пассивный осмотр: только highlight грани
+    PlaceIntent,  ///< Намерение поставить: highlight + preview (RMB hold)
+    BreakHold,    ///< Разрушение: highlight + прогресс-бар (LMB hold)
+};
+
+// ============================================================================
+//  VoxelRaycasterNode — рендер фидбека по режиму
 // ============================================================================
 
 class VoxelRaycasterNode : public ax::Node
@@ -258,59 +268,86 @@ public:
     void setMaxDistance(float d) noexcept { _maxDist = d; }
     float getMaxDistance() const noexcept { return _maxDist; }
 
-    // Цвет подсветки грани (tint меша)
+    // === Управление режимом извне (GameScene) ===
+    void setInteractionMode(BlockInteractionMode mode);
+    BlockInteractionMode getInteractionMode() const noexcept { return _mode; }
+
+    // === Прогресс разрушения [0..1] ===
+    void setBreakProgress(float t) noexcept { _breakProgress = std::clamp(t, 0.0f, 1.0f); }
+
+    // === Цвета подсветки ===
     void setFaceHighlightColor(const ax::Color4F& c) noexcept { _faceColor = c; }
-
-    // Цвет preview блока
     void setPlacePreviewColor(const ax::Color4F& c) noexcept { _previewColor = c; }
-    void setPlacePreviewVisible(bool v) noexcept { _previewVisible = v; }
+    void setBreakProgressColor(const ax::Color4F& c) noexcept { _breakColor = c; }
 
+    // [FIX #1] Управление видимостью превью блока
+    void setPlacePreviewVisible(bool visible) noexcept { _placePreviewVisible = visible; }
+    bool isPlacePreviewVisible() const noexcept { return _placePreviewVisible; }
+
+    // [FIX #8] Установка капсулы игрока для проверки коллизий
+    void setPlayerCapsule(const PlayerCapsule* capsule) { _playerCapsule = capsule; }
+
+    // === Коллбеки ===
     void setOnHit(HitCallback cb) { _onHit = std::move(cb); }
     void setOnMiss(MissCallback cb) { _onMiss = std::move(cb); }
 
+    // === Состояние ===
     const std::optional<VoxelHit>& getLastHit() const noexcept { return _lastHit; }
     bool hasHit() const noexcept { return _lastHit.has_value(); }
 
+    // === Действия (вызываются GameScene по таймингу) ===
     bool breakBlock();
     bool placeBlock(BlockId id);
 
     void update(float dt) override;
 
 private:
-    // Создаёт меш для одного блока (переиспользуем ChunkMeshBuilder логику)
-    ax::Mesh* createSingleBlockMesh(BlockId blockId, const ax::Vec3& offset, float scale = 1.0f);
+    // === Рендер компоненты ===
+    void updateFaceHighlight(const VoxelHit& hit);
+    void updatePlacePreview(const VoxelHit& hit);
+    void updateBreakProgress(const VoxelHit& hit);
 
-    // Создаёт wireframe меш для грани (ВАРИАНТ 2: линии через _wireframe)
-    ax::Mesh* createFaceWireMesh(const VoxelHit& hit);
+    void hideFaceHighlight();
+    void hidePlacePreview();
+    void hideBreakProgress();
+    void hideAll();
 
-    // Создаёт полупрозрачный меш грани (ВАРИАНТ 4: прозрачный блок)
+    // === Меш-билдинг ===
     ax::Mesh* createFaceHighlightMesh(const VoxelHit& hit);
-
-    // Создаёт preview меш для установки
     ax::Mesh* createPlacePreviewMesh(const VoxelHit& hit);
-
-    // Обновляет/создаёт MeshRenderer'ы для подсветки
-    void rebuildHighlight(const VoxelHit& hit);
-    void hideHighlight();
+    ax::Mesh* createBreakProgressMesh(const VoxelHit& hit, float progress);
 
     static ax::Vec3 cameraForward(const ax::Camera* cam);
 
+    // === Данные ===
     ax::Camera* _camera = nullptr;
     ChunkManager* _mgr  = nullptr;
     float _maxDist      = 8.0f;
 
     std::optional<VoxelHit> _lastHit;
+    BlockInteractionMode _mode = BlockInteractionMode::Look;
+    float _breakProgress       = 0.0f;
 
-    // MeshRenderer для подсветки (переиспользуем существующий 3D pipeline)
-    ax::MeshRenderer* _faceHighlightRenderer = nullptr;  // Полупрозрачная грань
-    ax::MeshRenderer* _placePreviewRenderer  = nullptr;  // Preview блока
+    // MeshRenderer'ы для каждого слоя фидбека
+    ax::MeshRenderer* _faceHighlightRenderer = nullptr;
+    ax::MeshRenderer* _placePreviewRenderer  = nullptr;
+    ax::MeshRenderer* _breakProgressRenderer = nullptr;
 
-    bool _previewVisible = true;
+    // [FIX #6] Кэш последнего хита для предотвращения пересоздания мешей каждый кадр
+    VoxelHit _lastFaceHighlightHit{};
+    bool _faceHighlightDirty = true;
 
+    // [FIX #1] Флаг видимости превью
+    bool _placePreviewVisible = true;
+
+    // [FIX #8] Указатель на капсулу игрока
+    const PlayerCapsule* _playerCapsule = nullptr;
+
+    // Цвета
     ax::Color4F _faceColor{1.0f, 1.0f, 1.0f, 0.25f};
     ax::Color4F _previewColor{0.2f, 0.9f, 0.2f, 0.2f};
+    ax::Color4F _breakColor{1.0f, 0.3f, 0.1f, 0.5f};
 
-    // Кэш текстуры атласа (берём из ChunkManager или создаём fallback)
     ax::Texture2D* _terrainAtlas = nullptr;
 
     HitCallback _onHit;

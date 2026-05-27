@@ -181,7 +181,8 @@ private:
      */
     static size_t index(int lx, int ly, int lz) noexcept
     {
-        return static_cast<size_t>(lx + ly * CHUNK_SIZE_X + lz * CHUNK_SIZE_X * CHUNK_SIZE_Y);
+        // [FIX #5] Исправлена индексация на Y-major (ly меняется быстрее всего)
+        return static_cast<size_t>(ly + lx * CHUNK_SIZE_Y + lz * CHUNK_SIZE_X * CHUNK_SIZE_Y);
     }
 
     ChunkKey _key;                 ///< Ключ чанка для идентификации
@@ -701,7 +702,8 @@ private:
      *
      * @note Лимит per-frame предотвращает просадки FPS при массовой загрузке
      */
-    void processReadyChunks();
+    // [FIX #3] Добавлен флаг force для возможности обработки очереди при паузе
+    void processReadyChunks(bool force = false);
 
     /**
      * @brief Выгрузка чанков из _unloadQueue

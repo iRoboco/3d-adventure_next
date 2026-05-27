@@ -239,10 +239,10 @@ inline void buildChunkMesh(const ChunkData& data,
         indices.emplace_back<uint16_t>(baseIdx + 3);
     };
 
-    // Основной проход по всем вокселям чанка (Y-major для кэш-локальности)
+    // [FIX #5] Порядок циклов изменен на Z -> X -> Y для кэш-локальности Y-major layout
     for (int z = 0; z < CZ; ++z)
-        for (int y = 0; y < CY; ++y)
-            for (int x = 0; x < CX; ++x)
+        for (int x = 0; x < CX; ++x)
+            for (int y = 0; y < CY; ++y)
             {
                 uint16_t bid = data.getBlock(x, y, z);
                 if (bid == BLOCK_AIR) continue;  ///< Пропускаем воздух — геометрия не нужна

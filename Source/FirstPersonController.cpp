@@ -321,6 +321,8 @@ void FirstPersonController::update(float dt)
         _capsule.bottomPos = newPos - ax::Vec3(0, _capsule.height * 0.85f, 0);
         this->setPosition3D(_capsule.bottomPos);
     }
+
+    processBlockInteraction(dt);
 }
 
 // =========================================================================
@@ -328,56 +330,61 @@ void FirstPersonController::update(float dt)
 // =========================================================================
 void FirstPersonController::setupEventListeners()
 {
-    _mouseListener = ax::EventListenerMouse::create();
-    _mouseListener->onMouseMove = [this](auto* event) { this->onMouseMove(event); return true; };
-    _mouseListener->onMouseDown = [this](auto* event) { this->onMouseDown(event); return true; };
-    _mouseListener->onMouseUp = [this](auto* event) { this->onMouseUp(event); return true; };
-    // Mouse listener привязан к scene graph — снимается автоматически при удалении ноды
-    _eventDispatcher->addEventListenerWithSceneGraphPriority(_mouseListener, this);
-
-    _keyboardListener = ax::EventListenerKeyboard::create();
-    _keyboardListener->onKeyPressed  = [this](auto code, auto* event) { onKeyPressed(code, event); };
-    _keyboardListener->onKeyReleased = [this](auto code, auto* event) { onKeyReleased(code, event); };
-    // Keyboard listener — Fixed priority (требует явного снятия в onExit/dtor)
-    _eventDispatcher->addEventListenerWithFixedPriority(_keyboardListener, 10);
-}
-
-void FirstPersonController::onMouseDown(ax::Event* event)
-{
-    if (!_enabled) return;
-    auto* e = static_cast<ax::EventMouse*>(event);
-    // ЛКМ — ломать блок (всегда, не только в freeFlight)
-    if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_LEFT)
-    {
-        if (_raycaster)
-        {
-            _raycaster->breakBlock();
-        }
-
-        // В freeFlight ЛКМ также включает look-around
-        if (_freeFlightMode)
+    _mouseListener              = ax::EventListenerMouse::create();
+    _mouseListener->onMouseMove = [this](auto* event) {
+        this->onMouseMove(event);
+        return true;
+    };
+    _mouseListener->onMouseDown = [this](auto* event) {
+        auto* e = static_cast<ax::EventMouse*>(event);
+        if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_LEFT && _freeFlightMode)
         {
             _isLeftMousePressed = true;
             _lastMousePos.set(e->getCursorX(), e->getCursorY());
         }
-    }
-    // ПКМ — ставить блок
-    else if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_RIGHT)
-    {
-        if (_raycaster)
+        if (!_freeFlightMode && _raycaster)
         {
-            _raycaster->placeBlock(BLOCK_STONE);
+            if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_LEFT)
+            {
+                _raycaster->setInteractionMode(BlockInteractionMode::BreakHold);
+                _breakAccum = 0.0f;
+                _raycaster->setBreakProgress(0.0f);
+            }
+            else if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_RIGHT)
+            {
+                _raycaster->setInteractionMode(BlockInteractionMode::PlaceIntent);
+            }
         }
-    }
-}
+        return true;
+    };
+    _mouseListener->onMouseUp = [this](auto* event) {
+        auto* e = static_cast<ax::EventMouse*>(event);
+        if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_LEFT)
+        {
+            _isLeftMousePressed = false;
+            if (!_freeFlightMode && _raycaster)
+            {
+                _raycaster->setInteractionMode(BlockInteractionMode::Look);
+                _breakAccum = 0.0f;
+                _raycaster->setBreakProgress(0.0f);
+            }
+        }
+        else if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_RIGHT)
+        {
+            if (!_freeFlightMode && _raycaster)
+            {
+                _raycaster->placeBlock(_selectedBlockId);
+                _raycaster->setInteractionMode(BlockInteractionMode::Look);
+            }
+        }
+        return true;
+    };
+    _eventDispatcher->addEventListenerWithSceneGraphPriority(_mouseListener, this);
 
-void FirstPersonController::onMouseUp(ax::Event* event)
-{
-    if (!_enabled) return;
-    auto* e = static_cast<ax::EventMouse*>(event);
-    if (e->getMouseButton() == ax::EventMouse::MouseButton::BUTTON_LEFT) {
-        _isLeftMousePressed = false;
-    }
+    _keyboardListener                = ax::EventListenerKeyboard::create();
+    _keyboardListener->onKeyPressed  = [this](auto code, auto* event) { onKeyPressed(code, event); };
+    _keyboardListener->onKeyReleased = [this](auto code, auto* event) { onKeyReleased(code, event); };
+    _eventDispatcher->addEventListenerWithFixedPriority(_keyboardListener, 10);
 }
 
 void FirstPersonController::onMouseMove(ax::Event* event)
@@ -422,27 +429,94 @@ void FirstPersonController::onMouseMove(ax::Event* event)
 
 void FirstPersonController::onKeyPressed(ax::EventKeyboard::KeyCode code, ax::Event* event)
 {
-    if (!_enabled) return;
-    switch (code) {
-        case ax::EventKeyboard::KeyCode::KEY_W: _keyW = true; break;
-        case ax::EventKeyboard::KeyCode::KEY_S: _keyS = true; break;
-        case ax::EventKeyboard::KeyCode::KEY_A: _keyA = true; break;
-        case ax::EventKeyboard::KeyCode::KEY_D: _keyD = true; break;
-        case ax::EventKeyboard::KeyCode::KEY_SPACE: _keySpace = true; break;
-        case ax::EventKeyboard::KeyCode::KEY_F5: toggleFlightMode(); break;
-        default: break;
+    if (!_enabled)
+        return;
+    switch (code)
+    {
+    case ax::EventKeyboard::KeyCode::KEY_W:
+        _keyW = true;
+        break;
+    case ax::EventKeyboard::KeyCode::KEY_S:
+        _keyS = true;
+        break;
+    case ax::EventKeyboard::KeyCode::KEY_A:
+        _keyA = true;
+        break;
+    case ax::EventKeyboard::KeyCode::KEY_D:
+        _keyD = true;
+        break;
+    case ax::EventKeyboard::KeyCode::KEY_SPACE:
+        _keySpace = true;
+        break;
+    case ax::EventKeyboard::KeyCode::KEY_F5:
+        toggleFlightMode();
+        break;
+    case ax::EventKeyboard::KeyCode::KEY_1:
+        _selectedBlockId = BLOCK_STONE;
+        break;
+    case ax::EventKeyboard::KeyCode::KEY_2:
+        _selectedBlockId = BLOCK_DIRT;
+        break;
+    case ax::EventKeyboard::KeyCode::KEY_3:
+        _selectedBlockId = BLOCK_GRASS;
+        break;
+    default:
+        break;
     }
 }
 
 void FirstPersonController::onKeyReleased(ax::EventKeyboard::KeyCode code, ax::Event* event)
 {
-    if (!_enabled) return;
-    switch (code) {
-        case ax::EventKeyboard::KeyCode::KEY_W: _keyW = false; break;
-        case ax::EventKeyboard::KeyCode::KEY_S: _keyS = false; break;
-        case ax::EventKeyboard::KeyCode::KEY_A: _keyA = false; break;
-        case ax::EventKeyboard::KeyCode::KEY_D: _keyD = false; break;
-        case ax::EventKeyboard::KeyCode::KEY_SPACE: _keySpace = false; break;
-        default: break;
+    if (!_enabled)
+        return;
+    switch (code)
+    {
+    case ax::EventKeyboard::KeyCode::KEY_W:
+        _keyW = false;
+        break;
+    case ax::EventKeyboard::KeyCode::KEY_S:
+        _keyS = false;
+        break;
+    case ax::EventKeyboard::KeyCode::KEY_A:
+        _keyA = false;
+        break;
+    case ax::EventKeyboard::KeyCode::KEY_D:
+        _keyD = false;
+        break;
+    case ax::EventKeyboard::KeyCode::KEY_SPACE:
+        _keySpace = false;
+        break;
+    default:
+        break;
+    }
+}
+
+void FirstPersonController::processBlockInteraction(float dt)
+{
+    // [FIX #12] Защита от выполнения при отключенном контроллере
+    if (!_enabled)
+        return;
+
+    if (!_raycaster || _raycaster->getInteractionMode() != BlockInteractionMode::BreakHold)
+    {
+        return;
+    }
+
+    if (!_raycaster->hasHit())
+    {
+        _breakAccum = 0.0f;
+        _raycaster->setBreakProgress(0.0f);
+        return;
+    }
+
+    _breakAccum += dt;
+    float progress = std::min(_breakAccum / BREAK_TIME, 1.0f);
+    _raycaster->setBreakProgress(progress);
+
+    if (progress >= 1.0f)
+    {
+        _raycaster->breakBlock();
+        _breakAccum = 0.0f;
+        _raycaster->setBreakProgress(0.0f);
     }
 }
