@@ -50,6 +50,55 @@ bool VoxelRaycasterNode::init(ax::Camera* camera, ChunkManager* mgr, float maxDi
     }
 
     scheduleUpdateWithPriority(1);
+
+    // ============================================================================
+    //  ЕДИНОВРЕМЕННАЯ ИНИЦИАЛИЗАЦИЯ РЕНДЕРЕРОВ (Оптимизация производительности)
+    //  Вместо пересоздания MeshRenderer при каждом изменении хита, создаём их
+    //  один раз в init(). Это снижает нагрузку на граф сцены и менеджер памяти.
+    // ============================================================================
+    auto createCachedMaterial = [this]() -> ax::Material* {
+        auto* mat = ax::MeshMaterial::createBuiltInMaterial(ax::MeshMaterial::MaterialType::UNLIT, false);
+        if (mat)
+        {
+            ax::BlendFunc blend{};
+            blend.src = ax::backend::BlendFactor::SRC_ALPHA;
+            blend.dst = ax::backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
+            mat->getStateBlock().setBlendFunc(blend);
+            mat->getStateBlock().setDepthWrite(false);  // Не ломаем Z-буфер
+            mat->getStateBlock().setDepthTest(true);
+
+            // [CRITICAL] Сохраняем материал для применения ПОСЛЕ добавления меша.
+            // retain() гарантирует, что объект не будет удалён пулом autorelease до onExit().
+            mat->retain();
+        }
+        return mat;
+    };
+
+    _highlightMaterial = createCachedMaterial();
+    _previewMaterial   = createCachedMaterial();
+    _breakMaterial     = createCachedMaterial();
+
+    auto setupCachedRenderer = [&](DynamicMeshRenderer*& renderer) {
+        auto* dynRenderer = new (std::nothrow) DynamicMeshRenderer();
+        if (dynRenderer && dynRenderer->init())
+        {
+            dynRenderer->autorelease();
+            renderer = dynRenderer;
+            renderer->setCameraMask(static_cast<unsigned short>(ax::CameraFlag::USER1));
+            renderer->setVisible(false);
+            this->addChild(renderer);  // Добавляем в граф, но НЕ вызываем setMaterial() здесь!
+        }
+        else
+        {
+            AX_SAFE_DELETE(dynRenderer);
+        }
+    };
+
+    setupCachedRenderer(_faceHighlightRenderer);
+    setupCachedRenderer(_placePreviewRenderer);
+    setupCachedRenderer(_breakProgressRenderer);
+    _renderersInitialized = true;
+
     return true;
 }
 
@@ -293,138 +342,119 @@ ax::Mesh* VoxelRaycasterNode::createBreakProgressMesh(const VoxelHit& hit, float
 
 void VoxelRaycasterNode::updateFaceHighlight(const VoxelHit& hit)
 {
-    // [FIX #6] Пересоздаём меш только если блок изменился
-    bool sameBlock = _faceHighlightRenderer && _lastFaceHighlightHit.bx == hit.bx &&
-                     _lastFaceHighlightHit.by == hit.by && _lastFaceHighlightHit.bz == hit.bz &&
-                     _lastFaceHighlightHit.normal == hit.normal;
+    // [OPT] Проверка кэша: если координаты блока и нормаль грани совпадают с прошлым кадром,
+    // геометрия не изменилась → пропускаем аллокацию меша и обновление рендерера.
+    bool sameBlock = _lastFaceHighlightHit.bx == hit.bx && _lastFaceHighlightHit.by == hit.by &&
+                     _lastFaceHighlightHit.bz == hit.bz && _lastFaceHighlightHit.normal == hit.normal;
     if (sameBlock)
         return;
 
-    hideFaceHighlight();
-
+    // Генерируем новую геометрию только при смене целевой грани
     if (auto* mesh = createFaceHighlightMesh(hit))
     {
-        _faceHighlightRenderer = MeshRenderer::create();
+        // [API] MeshRenderer::clearMeshes() очищает вектор привязанных мешей без удаления самой ноды.
+        // Это безопаснее, чем removeFromParent(), и не вызывает пересчёт графа сцены.
+        _faceHighlightRenderer->clearMeshes();
         _faceHighlightRenderer->addMesh(mesh);
-        _faceHighlightRenderer->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
 
-        auto* material = MeshMaterial::createBuiltInMaterial(MeshMaterial::MaterialType::UNLIT, false);
-        if (material)
-        {
-            BlendFunc blend;
-            blend.src = backend::BlendFactor::SRC_ALPHA;
-            blend.dst = backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
-            material->getStateBlock().setBlendFunc(blend);
-            material->getStateBlock().setDepthWrite(false);
-            material->getStateBlock().setDepthTest(true);
-        }
-        _faceHighlightRenderer->setMaterial(material);
+        // [FIX CRASH] Применяем кэшированный материал ПОСЛЕ добавления меша.
+        // Если вызвать setMaterial() до addMesh(), массив _meshes пуст и вызов будет no-op.
+        if (_highlightMaterial)
+            _faceHighlightRenderer->setMaterial(_highlightMaterial);
+
+        _faceHighlightRenderer->setVisible(true);  // Показываем ноду
+
+        // [FIX] Axmol::Node::setColor() принимает только RGB (Color3B).
+        // Alpha-канал управляется отдельно через setOpacity().
         _faceHighlightRenderer->setColor(ax::Color3B(static_cast<uint8_t>(_faceColor.r * 255),
                                                      static_cast<uint8_t>(_faceColor.g * 255),
                                                      static_cast<uint8_t>(_faceColor.b * 255)));
-        _faceHighlightRenderer->setOpacity(static_cast<uint8_t>(_faceColor.a * 255));  // Alpha отдельно
+        _faceHighlightRenderer->setOpacity(static_cast<uint8_t>(_faceColor.a * 255));
 
-        this->addChild(_faceHighlightRenderer);
-        _lastFaceHighlightHit = hit;  // [FIX #6] Обновляем кэш
+        _lastFaceHighlightHit = hit;  // Сохраняем состояние для сравнения в следующем кадре
     }
 }
 
 void VoxelRaycasterNode::updatePlacePreview(const VoxelHit& hit)
 {
-    // [FIX #1] Проверка видимости превью
+    // [FIX #1] Если превью отключено флагом, просто скрываем кэшированную ноду
     if (!_placePreviewVisible)
+    {
+        _placePreviewRenderer->setVisible(false);
         return;
-
-    hidePlacePreview();
+    }
 
     if (auto* mesh = createPlacePreviewMesh(hit))
     {
-        _placePreviewRenderer = MeshRenderer::create();
+        _placePreviewRenderer->clearMeshes();  // Безопасная очистка
         _placePreviewRenderer->addMesh(mesh);
-        _placePreviewRenderer->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
+        if (_previewMaterial)
+            _placePreviewRenderer->setMaterial(_previewMaterial);
+        _placePreviewRenderer->setVisible(true);
 
-        auto* material = MeshMaterial::createBuiltInMaterial(MeshMaterial::MaterialType::UNLIT, false);
-        if (material)
-        {
-            BlendFunc blend;
-            blend.src = backend::BlendFactor::SRC_ALPHA;
-            blend.dst = backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
-            material->getStateBlock().setBlendFunc(blend);
-            material->getStateBlock().setDepthWrite(false);
-            material->getStateBlock().setDepthTest(true);
-        }
-        _placePreviewRenderer->setMaterial(material);
         _placePreviewRenderer->setColor(ax::Color3B(static_cast<uint8_t>(_previewColor.r * 255),
                                                     static_cast<uint8_t>(_previewColor.g * 255),
                                                     static_cast<uint8_t>(_previewColor.b * 255)));
         _placePreviewRenderer->setOpacity(static_cast<uint8_t>(_previewColor.a * 255));
-
-        this->addChild(_placePreviewRenderer);
+    }
+    else
+    {
+        // Если меш не создан (например, hit стал валидным, но геометрия нулевая), скрываем ноду
+        _placePreviewRenderer->setVisible(false);
     }
 }
 
 void VoxelRaycasterNode::updateBreakProgress(const VoxelHit& hit)
 {
-    hideBreakProgress();
-
+    // Если прогресс сброшен или равен нулю, скрываем индикатор и выходим
     if (_breakProgress <= 0.0f)
+    {
+        _breakProgressRenderer->setVisible(false);
         return;
+    }
 
     if (auto* mesh = createBreakProgressMesh(hit, _breakProgress))
     {
-        _breakProgressRenderer = MeshRenderer::create();
+        _breakProgressRenderer->clearMeshes();  // Безопасная очистка
         _breakProgressRenderer->addMesh(mesh);
-        _breakProgressRenderer->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
+        if (_breakMaterial)
+            _breakProgressRenderer->setMaterial(_breakMaterial);
+        _breakProgressRenderer->setVisible(true);
 
-        auto* material = MeshMaterial::createBuiltInMaterial(MeshMaterial::MaterialType::UNLIT, false);
-        if (material)
-        {
-            BlendFunc blend;
-            blend.src = backend::BlendFactor::SRC_ALPHA;
-            blend.dst = backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
-            material->getStateBlock().setBlendFunc(blend);
-            material->getStateBlock().setDepthWrite(false);
-            material->getStateBlock().setDepthTest(true);
-        }
-        _breakProgressRenderer->setMaterial(material);
         _breakProgressRenderer->setColor(ax::Color3B(static_cast<uint8_t>(_breakColor.r * 255),
                                                      static_cast<uint8_t>(_breakColor.g * 255),
                                                      static_cast<uint8_t>(_breakColor.b * 255)));
         _breakProgressRenderer->setOpacity(static_cast<uint8_t>(_breakColor.a * 255));
-
-        this->addChild(_breakProgressRenderer);
+    }
+    else
+    {
+        _breakProgressRenderer->setVisible(false);
     }
 }
 
 // ============================================================================
 //  Скрытие рендереров
 // ============================================================================
-
+//
+// [OPT] Раньше эти методы вызывали removeFromParentAndCleanup(true),
+// что приводило к полному уничтожению ноды и аллокации новой в следующем кадре.
+// Теперь мы просто меняем флаг видимости кэшированной ноды.
 void VoxelRaycasterNode::hideFaceHighlight()
 {
     if (_faceHighlightRenderer)
-    {
-        _faceHighlightRenderer->removeFromParentAndCleanup(true);
-        _faceHighlightRenderer = nullptr;
-    }
+        _faceHighlightRenderer->setVisible(false);
 }
 
 void VoxelRaycasterNode::hidePlacePreview()
 {
     if (_placePreviewRenderer)
-    {
-        _placePreviewRenderer->removeFromParentAndCleanup(true);
-        _placePreviewRenderer = nullptr;
-    }
+        _placePreviewRenderer->setVisible(false);
 }
 
 void VoxelRaycasterNode::hideBreakProgress()
 {
     if (_breakProgressRenderer)
-    {
-        _breakProgressRenderer->removeFromParentAndCleanup(true);
-        _breakProgressRenderer = nullptr;
-    }
+        _breakProgressRenderer->setVisible(false);
 }
 
 void VoxelRaycasterNode::hideAll()
@@ -508,4 +538,13 @@ Vec3 VoxelRaycasterNode::cameraForward(const ax::Camera* cam)
     fwd.z *= std::cosf(pitch);
     fwd.normalize();
     return fwd;
+}
+
+VoxelRaycasterNode::~VoxelRaycasterNode()
+{
+    // [MEMORY] Axmol использует ручной подсчёт ссылок.
+    // Кэшированные материалы требуют явного release() при уничтожении ноды.
+    AX_SAFE_RELEASE_NULL(_highlightMaterial);
+    AX_SAFE_RELEASE_NULL(_previewMaterial);
+    AX_SAFE_RELEASE_NULL(_breakMaterial);
 }

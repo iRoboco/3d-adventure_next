@@ -317,6 +317,14 @@ private:
     ax::Mesh* createPlacePreviewMesh(const VoxelHit& hit);
     ax::Mesh* createBreakProgressMesh(const VoxelHit& hit, float progress);
 
+    // [FIX CRASH] Материалы кэшируются отдельно. Применяются только после addMesh(),
+    // так как setMaterial() в Axmol работает только с существующими мешами в _meshes.
+    ax::Material* _highlightMaterial = nullptr;
+    ax::Material* _previewMaterial   = nullptr;
+    ax::Material* _breakMaterial     = nullptr;
+
+    ~VoxelRaycasterNode() override;  // Для безопасного release() кэшированных материалов
+
     static ax::Vec3 cameraForward(const ax::Camera* cam);
 
     // === Данные ===
@@ -328,10 +336,29 @@ private:
     BlockInteractionMode _mode = BlockInteractionMode::Look;
     float _breakProgress       = 0.0f;
 
-    // MeshRenderer'ы для каждого слоя фидбека
-    ax::MeshRenderer* _faceHighlightRenderer = nullptr;
-    ax::MeshRenderer* _placePreviewRenderer  = nullptr;
-    ax::MeshRenderer* _breakProgressRenderer = nullptr;
+    // ============================================================================
+    //  [OPT] Вспомогательный класс для динамических мешей.
+    //  Axmol::MeshRenderer не имеет публичного clear(), но хранит мешки в protected _meshes.
+    //  Наследуемся, чтобы безопасно очищать массивы и сбрасывать AABB без хаков.
+    // ============================================================================
+    class DynamicMeshRenderer : public ax::MeshRenderer
+    {
+    public:
+        // [API] Очищает внутренние векторы мешей и данных вершин.
+        // ax::Vector::clear() автоматически вызывает release() для каждого элемента,
+        // поэтому утечек памяти не возникает.
+        void clearMeshes()
+        {
+            _meshes.clear();           // Очищает Vector<Mesh*>, вызывает release()
+            _meshVertexDatas.clear();  // Очищает Vector<MeshVertexData*>
+            _aabbDirty = true;         // Помечаем AABB как невалидный для пересчёта в следующем кадре
+        }
+    };
+
+    // Заменяем тип указателей на наш наследник
+    DynamicMeshRenderer* _faceHighlightRenderer = nullptr;
+    DynamicMeshRenderer* _placePreviewRenderer  = nullptr;
+    DynamicMeshRenderer* _breakProgressRenderer = nullptr;
 
     // [FIX #6] Кэш последнего хита для предотвращения пересоздания мешей каждый кадр
     VoxelHit _lastFaceHighlightHit{};
@@ -339,6 +366,10 @@ private:
 
     // [FIX #1] Флаг видимости превью
     bool _placePreviewVisible = true;
+
+    // [OPT] Флаг для контроля единовременной инициализации кэшированных рендереров.
+    // Позволяет отделить этап настройки от этапа обновления в update().
+    bool _renderersInitialized = false;
 
     // [FIX #8] Указатель на капсулу игрока
     const PlayerCapsule* _playerCapsule = nullptr;
