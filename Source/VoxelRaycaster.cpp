@@ -196,7 +196,13 @@ ax::Mesh* VoxelRaycasterNode::createFaceHighlightMesh(const VoxelHit& hit)
         inds.emplace_back<uint16_t>(baseIdx + 3);
     };
 
-    float u = 0.0f, v = 0.0f, u2 = 1.0f, v2 = 1.0f;
+    int face            = hit.normal.y > 0.5f    ? 2
+                          : hit.normal.y < -0.5f ? 3
+                          : hit.normal.x > 0.5f  ? 0
+                          : hit.normal.x < -0.5f ? 1
+                          : hit.normal.z > 0.5f  ? 4
+                                                 : 5;
+    auto [u, v, u2, v2] = calculateTileUV(getBlockTileIndex(hit.blockId, face));
 
     float x0 = offset.x, x1 = offset.x + 1.0f;
     float y0 = offset.y, y1 = offset.y + 1.0f;
@@ -259,7 +265,14 @@ ax::Mesh* VoxelRaycasterNode::createPlacePreviewMesh(const VoxelHit& hit)
         inds.emplace_back<uint16_t>(baseIdx + 3);
     };
 
-    float u = 0.0f, v = 0.0f, u2 = 1.0f, v2 = 1.0f;
+    int face            = hit.normal.y > 0.5f    ? 2
+                          : hit.normal.y < -0.5f ? 3
+                          : hit.normal.x > 0.5f  ? 0
+                          : hit.normal.x < -0.5f ? 1
+                          : hit.normal.z > 0.5f  ? 4
+                                                 : 5;
+    auto [u, v, u2, v2] = calculateTileUV(getBlockTileIndex(hit.blockId, face));
+
     float x0 = offset.x, x1 = offset.x + 1.0f;
     float y0 = offset.y, y1 = offset.y + 1.0f;
     float z0 = offset.z, z1 = offset.z + 1.0f;
@@ -292,7 +305,13 @@ ax::Mesh* VoxelRaycasterNode::createBreakProgressMesh(const VoxelHit& hit, float
     std::vector<ChunkVertex> verts;
     ax::IndexArray inds;
 
-    float u = 0.0f, v = 0.0f, u2 = 1.0f, v2 = 1.0f;
+    int face            = hit.normal.y > 0.5f    ? 2
+                          : hit.normal.y < -0.5f ? 3
+                          : hit.normal.x > 0.5f  ? 0
+                          : hit.normal.x < -0.5f ? 1
+                          : hit.normal.z > 0.5f  ? 4
+                                                 : 5;
+    auto [u, v, u2, v2] = calculateTileUV(getBlockTileIndex(hit.blockId, face));
 
     Vec3 right, up;
     if (std::abs(hit.normal.x) > 0.5f)
