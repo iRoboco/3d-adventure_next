@@ -80,6 +80,9 @@ bool GameScene::init()
         const ChunkKey& key = chunk.getKey();
         auto basePos        = ChunkManager::chunkToWorld(key);
         thread_local siv::PerlinNoise perlin(42);
+        thread_local siv::PerlinNoise rockNoise(137);  // ← новый
+        thread_local siv::PerlinNoise dirtNoise(271);  // ← новый
+
         for (int x = 0; x < CHUNK_SIZE_X; ++x)
         {
             for (int z = 0; z < CHUNK_SIZE_Z; ++z)
@@ -89,23 +92,31 @@ bool GameScene::init()
                 float terrain = perlin.octave2D_01(wx * 0.02, wz * 0.02, 6) * 40.0f;
                 float biome   = perlin.octave2D_01(wx * 0.005, wz * 0.005, 4) * 15.0f - 5.0f;
                 int surfaceY  = std::clamp(static_cast<int>(terrain + biome + 30), 1, CHUNK_SIZE_Y - 2);
+
+                // Шум для выходов породы на поверхность
+                float rockVal = rockNoise.octave2D_01(wx * 0.08, wz * 0.08, 3);
+                float dirtVal = dirtNoise.octave2D_01(wx * 0.06, wz * 0.06, 2);
+
                 for (int y = 0; y <= surfaceY; ++y)
                 {
-                    // BlockId block = (y == surfaceY) ? 1 : (y > surfaceY - 4 ? 2 : 3);
                     BlockId block;
                     if (y == surfaceY)
                     {
-                        // Верхний слой — трава
-                        block = BLOCK_GRASS;
+                        // Камень выбивается там, где rockVal > 0.72
+                        // Земля выбивается там, где dirtVal > 0.65 (но не там, где камень)
+                        if (rockVal > 0.72f)
+                            block = BLOCK_STONE;
+                        else if (dirtVal > 0.65f)
+                            block = BLOCK_DIRT;
+                        else
+                            block = BLOCK_GRASS;
                     }
                     else if (y > surfaceY - 4)
                     {
-                        // 4 слоя под травой — земля
                         block = BLOCK_DIRT;
                     }
                     else
                     {
-                        // Глубже — камень
                         block = BLOCK_STONE;
                     }
                     chunk.setBlock(x, y, z, block);
@@ -125,7 +136,8 @@ bool GameScene::init()
         this->addChild(node);
     });
     _chunkMgr.setOnUnload([this](ax::Node* node, const ChunkKey& key) {
-        if (node) node->removeFromParentAndCleanup(true);
+        if (node)
+            node->removeFromParentAndCleanup(true);
     });
 
     // Создание контроллера
@@ -147,7 +159,7 @@ bool GameScene::init()
     _raycaster->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
     _raycaster->setFaceHighlightColor({1.0f, 1.0f, 1.0f, 0.25f});  // Подсветка грани
     _raycaster->setPlacePreviewColor({0.2f, 0.9f, 0.2f, 0.2f});    // Выбор места кубика
-    _raycaster->setPlacePreviewVisible(true); // [FIX #1]
+    _raycaster->setPlacePreviewVisible(true);                      // [FIX #1]
 
     // [FIX #8] Передаем ссылку на капсулу игрока в рейкастер
     _raycaster->setPlayerCapsule(&_playerController->getCapsule());
@@ -171,7 +183,7 @@ bool GameScene::init()
         }
     });
     _raycaster->setOnMiss([this]() {
-    // Можно скрыть HUD-подсказку
+        // Можно скрыть HUD-подсказку
     });
     this->addChild(_raycaster);
     _playerController->setRaycaster(_raycaster);
@@ -191,8 +203,6 @@ bool GameScene::init()
 
     return true;
 }
-
-
 
 // =========================================================================
 //  onEnter

@@ -253,7 +253,7 @@ public:
         int maxDirtyRebuildsPerFrame = 2;
 
         /// @brief Режим фильтрации текстур атласа
-        TextureFilterMode textureFilter = TextureFilterMode::NEAREST;
+        TextureFilterMode textureFilter = TextureFilterMode::NEAREST_MIPMAP_NEAREST;
     };
 
     /// @} // конец группы "Конфигурация"
