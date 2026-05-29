@@ -216,7 +216,7 @@ void ChunkManager::workerLoop()
 }
 
 // =========================================================================
-//  update
+//  update — главный игровой цикл менеджера чанков
 // =========================================================================
 void ChunkManager::update(const ax::Vec3& playerWorldPos)
 {
@@ -226,16 +226,20 @@ void ChunkManager::update(const ax::Vec3& playerWorldPos)
         return;
 
     ChunkKey playerChunk = worldToChunk(playerWorldPos);
-    // [FIX] Пересобираем кандидатов КАЖДЫЙ кадр, а не только при смене чанка.
-    // Чанки, не попавшие в очередь из-за переполнения, получат второй шанс.
+
+    // [FIX #chank] Пересобираем кандидатов КАЖДЫЙ кадр, а не только при смене чанка.
+    // Чанки, отброшенные из-за переполнения очереди в предыдущем кадре,
+    // получат второй шанс и корректно добавятся по мере освобождения слотов.
     collectChunksToLoad(playerChunk);
 
     if (playerChunk != _lastPlayerChunk)
     {
         _lastPlayerChunk = playerChunk;
-        collectChunksToLoad(playerChunk);
+        // Выгрузка запускается только при реальном перемещении игрока,
+        // так как это тяжёлая операция с итерацией по всей карте _chunks.
         collectChunksToUnload(playerChunk);
     }
+
     processReadyChunks();
     processDirtyChunks();
     processUnloadQueue();
@@ -263,55 +267,64 @@ BlockId ChunkManager::getBlockAtWorldPos(const ax::Vec3& worldPos) const
 }
 
 // =========================================================================
-//  collectChunksToLoad
+//  collectChunksToLoad — сбор и приоритизация чанков для генерации
 // =========================================================================
 void ChunkManager::collectChunksToLoad(const ChunkKey& playerChunk)
 {
+    // Не загружаем новые чанки, если на паузе
     if (_paused)
         return;
 
     int rd = _cfg.renderDistance;
     std::vector<std::pair<int, ChunkKey>> candidates;
+    // Резервируем память под квадрат видимости, чтобы избежать реаллокаций в цикле
     candidates.reserve((rd * 2 + 1) * (rd * 2 + 1));
 
     for (int32_t dx = -rd; dx <= rd; ++dx)
         for (int32_t dz = -rd; dz <= rd; ++dz)
         {
             ChunkKey key{playerChunk.x + dx, 0, playerChunk.z + dz};
+            // Отсеиваем чанки за пределами кругового радиуса видимости
             if (chunkDistance(key, playerChunk) > rd)
                 continue;
+            // Пропускаем уже известные чанки (любой статус кроме None)
             auto it = _chunks.find(key);
             if (it != _chunks.end() && it->second.status != ChunkStatus::None)
                 continue;
+            // Пропускаем чанки, уже стоящие в очереди на генерацию
             if (_genPendingSet.count(key))
                 continue;
+            // Сохраняем пару (расстояние, ключ) для последующей сортировки
             candidates.emplace_back(chunkDistance(key, playerChunk), key);
         }
 
+    // Сортируем кандидатов: ближние к игроку будут идти первыми
     std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
 
     for (const auto& [dist, key] : candidates)
     {
-        // [FIX] Сначала пытаемся добавить в очередь. Только при успехе —
-        // помечаем чанк как QueuedForGen и вставляем в _genPendingSet.
-        if (!_genQueue.push(key))
+        // [FIX #chank + #queue] Сначала проверяем вместимость очереди.
+        // Метод push() теперь возвращает bool, что позволяет безопасно откатить транзакцию.
+        if (!_genQueue.push(key, dist))
         {
-            // Очередь переполнена — прекращаем попытки для этого кадра.
-            // Ближайшие чанки уже отсортированы первыми, дальние подождут.
+            // Очередь переполнена → прерываем цикл текущего кадра.
+            // Ближайшие чанки уже добавлены в приоритетную очередь первыми,
+            // дальние автоматически подождут следующего update().
             break;
         }
 
-        // push успешен — теперь безопасно создавать/модифицировать запись.
+        // push() вернул true → слот зарезервирован. Теперь безопасно модифицируем состояние.
+        // try_emplace возвращает pair<iterator, bool>, где bool = true если запись новая.
         auto [it, inserted] = _chunks.try_emplace(key);
         auto& entry         = it->second;
         entry.status        = ChunkStatus::QueuedForGen;
         entry.visualNode    = nullptr;
         entry.chunkData.reset();
         entry.dirty = false;
+        // Регистрируем чанк как "ожидающий генерации", чтобы не дублировать задачи
         _genPendingSet.insert(key);
     }
 }
-
 
 // =========================================================================
 //  collectChunksToUnload
@@ -416,19 +429,32 @@ void ChunkManager::processReadyChunks(bool force)
             return;
         ready.swap(_readyChunks);
     }
+
+    // [FIX] Воркеры работают параллельно и завершают задачи в случайном порядке
+    // (зависит от нагрузки CPU, сложности террейна, кэш-локальности).
+    // Без сортировки чанки появлялись бы хаотично, игнорируя приоритет очереди.
+    // Сортируем готовые чанки по расстоянию до текущей позиции игрока.
+    std::sort(ready.begin(), ready.end(), [this](const auto& a, const auto& b) {
+        return chunkDistance(a->getKey(), _lastPlayerChunk) < chunkDistance(b->getKey(), _lastPlayerChunk);
+    });
+
     int processed = 0;
     for (auto& chunkPtr : ready)
     {
         if (processed >= _cfg.maxGenerationsPerFrame)
         {
             std::lock_guard<std::mutex> lk(_readyMtx);
+            // Возвращаем непроцессированные чанки обратно в очередь для следующего кадра
             _readyChunks.insert(_readyChunks.end(), std::make_move_iterator(ready.begin() + processed),
                                 std::make_move_iterator(ready.end()));
             break;
         }
+
         const ChunkKey& key = chunkPtr->getKey();
         auto it             = _chunks.find(key);
-        auto cancelGen      = [&]() {
+
+        // Лямбда-хелпер для отмены генерации устаревших/выгружаемых чанков
+        auto cancelGen = [&]() {
             _genPendingSet.erase(key);
             if (it != _chunks.end())
             {
@@ -440,12 +466,14 @@ void ChunkManager::processReadyChunks(bool force)
                 it->second.status = ChunkStatus::None;
             }
         };
+
         if (it == _chunks.end() || it->second.status == ChunkStatus::QueuedForUnload)
         {
             cancelGen();
             continue;
         }
         it->second.chunkData = std::move(chunkPtr);
+
         // Используем isAllAir() для пропуска пустых чанков
         if (it->second.chunkData->isAllAir())
         {
@@ -476,6 +504,10 @@ void ChunkManager::processReadyChunks(bool force)
         _genPendingSet.erase(key);
         if (_onVisualize)
             _onVisualize(chunkNode, key);
+        // if (it->second.waterNode && _onVisualize)
+        //     _onVisualize(it->second.waterNode, key);
+
+        // Помечаем соседей dirty для перестройки стыковых граней
         ChunkKey neighborKeys[] = {
             {key.x - 1, key.y, key.z}, {key.x + 1, key.y, key.z}, {key.x, key.y, key.z - 1}, {key.x, key.y, key.z + 1}};
         for (const auto& nk : neighborKeys)

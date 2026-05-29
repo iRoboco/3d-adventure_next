@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <queue>  // [FIX] Добавлено для std::priority_queue
 
 // ============================================================================
 /** @name Базовые типы и константы
@@ -473,11 +474,11 @@ public:
     }
 
     /**
-    * @brief Установка типа блока по мировым координатам
-    * @param worldPos Мировые координаты (центр блока: floor + 0.5)
-    * @param id Новый тип блока (BLOCK_AIR = удалить)
-    * @return true если блок изменён, false если чанк не загружен
-    */
+     * @brief Установка типа блока по мировым координатам
+     * @param worldPos Мировые координаты (центр блока: floor + 0.5)
+     * @param id Новый тип блока (BLOCK_AIR = удалить)
+     * @return true если блок изменён, false если чанк не загружен
+     */
     bool setBlockAtWorldPos(const ax::Vec3& worldPos, BlockId id);
 
     /// @} // конец группы "Публичный API доступа к чанкам"
@@ -512,75 +513,88 @@ private:
     };
 
     /**
-     * @brief Потокобезопасная очередь задач генерации
-     *
-     * Реализует паттерн Producer-Consumer с condition_variable
-     * для эффективного ожидания задач без активного polling.
+     * @brief Потокобезопасная ПРИОРИТЕТНАЯ очередь задач генерации
+     * Реализует паттерн Producer-Consumer с condition_variable.
+     * Заменяет std::deque на std::priority_queue, чтобы ближние к игроку чанки
+     * обрабатывались воркерами в первую очередь, даже при добавлении в разное время.
      */
     struct TaskQueue
     {
-        std::mutex mtx;              ///< Мьютекс для синхронизации доступа к очереди
-        std::condition_variable cv;  ///< Условие для блокирующего ожидания задач
-        std::deque<ChunkKey> queue;  ///< FIFO очередь ключей чанков на генерацию
-        bool stop = false;           ///< Флаг остановки для корректного завершения воркеров
+        /**
+         * @brief Элемент очереди с явным приоритетом
+         * @note priority_queue по умолчанию вытаскивает МАКСИМАЛЬНЫЙ элемент.
+         *       Для нас меньшее расстояние = высший приоритет, поэтому оператор < инвертирован.
+         */
+        struct Item
+        {
+            ChunkKey key;
+            int priority;  ///< Расстояние до игрока (0 = самый ближний)
 
-        /// @brief Максимальный размер очереди для защиты памяти
-        size_t maxSize = 128;
+            // Инвертированное сравнение для превращения max-heap в min-heap:
+            // если this.priority > other.priority, то this считается "меньшим",
+            // и other (ближний чанк) поднимается на вершину кучи.
+            bool operator<(const Item& other) const noexcept { return priority > other.priority; }
+        };
+
+        std::mutex mtx;
+        std::condition_variable cv;
+        std::priority_queue<Item> queue;  ///< Приоритетная очередь задач
+        bool stop      = false;           ///< Флаг корректного завершения воркеров
+        size_t maxSize = 128;             ///< Лимит для защиты от переполнения памяти
 
         /**
-         * @brief Добавление задачи в очередь (потокобезопасно)
-         * @param k Ключ чанка для генерации
-         * @note Если очередь переполнена (size >= maxSize) — задача отбрасывается
+         * @brief Добавить задачу в очередь (потокобезопасно)
+         * @param k Ключ чанка
+         * @param priority Расстояние до игрока (используется для сортировки)
+         * @return true если задача добавлена, false если очередь переполнена
          */
-        bool push(const ChunkKey& key)
+        bool push(const ChunkKey& k, int priority)
         {
             std::lock_guard<std::mutex> lk(mtx);
             if (queue.size() >= maxSize)
-                return false;
-            queue.push_back(key);
-            cv.notify_one();
+                return false;  ///< Очередь полна → сигнализируем вызывающему коду
+            queue.push({k, priority});
+            cv.notify_one();  ///< Пробуждаем один ожидающий воркер
             return true;
         }
 
         /**
-         * @brief Извлечение задачи из очереди (блокирующее, потокобезопасно)
-         * @param out Выходной параметр для полученного ключа
-         * @return true если задача получена, false если stop=true и очередь пуста
-         * @note Блокирует поток до появления задачи или сигнала остановки
+         * @brief Извлечь задачу с наивысшим приоритетом (блокирующее ожидание)
+         * @param out Выходной параметр для ключа чанка
+         * @return false если остановка запрошена и очередь пуста, иначе true
          */
         bool pop(ChunkKey& out)
         {
             std::unique_lock<std::mutex> lk(mtx);
+            // Блокировка до появления задачи или сигнала остановки
             cv.wait(lk, [&] { return stop || !queue.empty(); });
             if (stop && queue.empty())
-                return false;
-            out = queue.front();
-            queue.pop_front();
+                return false;       ///< Воркеры завершают цикл
+            out = queue.top().key;  ///< Берём ближайший чанк
+            queue.pop();            ///< Удаляем из кучи
             return true;
         }
 
-        /// @brief Сигнал остановки всем ожидающим воркерам
+        /// @brief Сигнал остановки всем воркерам
         void signalStop()
         {
             {
                 std::lock_guard<std::mutex> lk(mtx);
                 stop = true;
             }
-            cv.notify_all();  ///< Пробуждает все воркеры для проверки stop
+            cv.notify_all();  ///< Пробуждаем ВСЕ воркеры для проверки флага stop
         }
 
         /**
-         * @brief Очистка очереди и сброс флага остановки для resume()
-         *
-         * @par Зачем нужно:
-         * После pause() флаг stop остаётся true. Без его сброса при resume()
-         * воркеры в pop() сразу вернут false, не дождавшись новых задач.
+         * @brief Полная очистка очереди и сброс флага остановки
+         * @note Критично для корректной работы resume() после pause()
          */
         void clearAndReset()
         {
             std::lock_guard<std::mutex> lk(mtx);
-            queue.clear();
-            stop = false;  ///< Критично для работы resume()
+            while (!queue.empty())
+                queue.pop();
+            stop = false;  ///< Сбрасываем, чтобы при resume pop() снова ждал задачи
         }
     };
 

@@ -5,7 +5,7 @@
 #include <cmath>
 
 #if defined(GLFW_VERSION_MAJOR)
-#include <GLFW/glfw3.h>
+#    include <GLFW/glfw3.h>
 #endif
 
 USING_NS_AX;
@@ -19,11 +19,14 @@ FirstPersonController::~FirstPersonController()
 {
     // Явное снятие listener'ов в деструкторе — защита от
     // dangling callback, если onExit не был вызван
-    if (_eventDispatcher) {
-        if (_keyboardListener) _eventDispatcher->removeEventListener(_keyboardListener);
-        if (_mouseListener)    _eventDispatcher->removeEventListener(_mouseListener);
+    if (_eventDispatcher)
+    {
+        if (_keyboardListener)
+            _eventDispatcher->removeEventListener(_keyboardListener);
+        if (_mouseListener)
+            _eventDispatcher->removeEventListener(_mouseListener);
         _keyboardListener = nullptr;
-        _mouseListener = nullptr;
+        _mouseListener    = nullptr;
     }
 }
 
@@ -33,7 +36,8 @@ FirstPersonController::~FirstPersonController()
 FirstPersonController* FirstPersonController::create(ax::Camera* camera, float moveSpeed, float mouseSensitivity)
 {
     auto* ret = new (std::nothrow) FirstPersonController();
-    if (ret && ret->init(camera, moveSpeed, mouseSensitivity)) {
+    if (ret && ret->init(camera, moveSpeed, mouseSensitivity))
+    {
         ret->autorelease();
         return ret;
     }
@@ -43,17 +47,19 @@ FirstPersonController* FirstPersonController::create(ax::Camera* camera, float m
 
 bool FirstPersonController::init(ax::Camera* camera, float moveSpeed, float mouseSensitivity)
 {
-    if (!ax::Node::init()) return false;
-    if (!camera) return false;
+    if (!ax::Node::init())
+        return false;
+    if (!camera)
+        return false;
 
-    _camera = camera;
-    _baseMoveSpeed = moveSpeed;
-    _moveSpeed = moveSpeed;
+    _camera           = camera;
+    _baseMoveSpeed    = moveSpeed;
+    _moveSpeed        = moveSpeed;
     _mouseSensitivity = mouseSensitivity;
 
     _capsule.bottomPos = ax::Vec3::ZERO;
-    _capsule.radius = 0.25f;
-    _capsule.height = 1.6f;
+    _capsule.radius    = 0.25f;
+    _capsule.height    = 1.6f;
 
     setupEventListeners();
     setFreeFlightMode(false);
@@ -64,7 +70,8 @@ bool FirstPersonController::init(ax::Camera* camera, float moveSpeed, float mous
 void FirstPersonController::setInitialPosition(const ax::Vec3& worldPos)
 {
     _capsule.bottomPos = worldPos;
-    if (_camera) {
+    if (_camera)
+    {
         _camera->setPosition3D(worldPos + ax::Vec3(0, _capsule.height * 0.85f, 0));
     }
     Node::setPosition3D(worldPos);
@@ -79,13 +86,12 @@ void FirstPersonController::setSpeedMultiplier(float multiplier)
     _moveSpeed = _baseMoveSpeed * std::max(0.0f, multiplier);
 }
 
-void FirstPersonController::setFrictionParams(float groundAccel, float groundDecel,
-                                              float airAccel, float airDecel)
+void FirstPersonController::setFrictionParams(float groundAccel, float groundDecel, float airAccel, float airDecel)
 {
     _groundAccel = groundAccel;
     _groundDecel = groundDecel;
-    _airAccel = airAccel;
-    _airDecel = airDecel;
+    _airAccel    = airAccel;
+    _airDecel    = airDecel;
 }
 
 void FirstPersonController::resetVelocity()
@@ -100,7 +106,8 @@ void FirstPersonController::resetVelocity()
 void FirstPersonController::setEnabled(bool enabled)
 {
     _enabled = enabled;
-    if (!_enabled) {
+    if (!_enabled)
+    {
         _keyW = _keyA = _keyS = _keyD = _keySpace = _isLeftMousePressed = false;
         resetVelocity();
         _collisionResolver.reset();
@@ -110,16 +117,20 @@ void FirstPersonController::setEnabled(bool enabled)
 void FirstPersonController::setFreeFlightMode(bool enabled)
 {
     _freeFlightMode = enabled;
-    auto glView = ax::Director::getInstance()->getGLView();
-    if (!glView) return;
+    auto glView     = ax::Director::getInstance()->getGLView();
+    if (!glView)
+        return;
 
-    if (_freeFlightMode) {
+    if (_freeFlightMode)
+    {
         glView->setCursorVisible(true);
         _isLeftMousePressed = false;
-    } else {
+    }
+    else
+    {
         glView->setCursorVisible(false);
-        // Захват мыши в режиме FPC - курсор фиксируется в центре окна
-        #if defined(GLFW_VERSION_MAJOR)
+// Захват мыши в режиме FPC - курсор фиксируется в центре окна
+#if defined(GLFW_VERSION_MAJOR)
         auto* glViewImpl = dynamic_cast<ax::RenderViewImpl*>(glView);
         if (glViewImpl)
         {
@@ -130,11 +141,11 @@ void FirstPersonController::setFreeFlightMode(bool enabled)
                 // Получаем текущую позицию курсора из GLFW для корректной инициализации
                 // Это предотвращает скачок камеры при первом движении мыши после захвата
                 double xpos, ypos;
-                glfwGetCursorPos(window, &xpos, &ypos);
+                _firstMouseMove = true;
                 _lastMousePos.set(static_cast<float>(xpos), static_cast<float>(ypos));
             }
         }
-        #endif
+#endif
     }
 }
 
@@ -151,12 +162,15 @@ void FirstPersonController::onExit()
     // Keyboard listener зарегистрирован с Fixed Priority (не привязан к scene graph).
     // При удалении ноды из сцены, Axmol НЕ снимает его автоматически.
     // Безопасное снятие Fixed-priority listener
-    if (_eventDispatcher) {
-        if (_keyboardListener) {
+    if (_eventDispatcher)
+    {
+        if (_keyboardListener)
+        {
             _eventDispatcher->removeEventListener(_keyboardListener);
             _keyboardListener = nullptr;
         }
-        if (_mouseListener) {
+        if (_mouseListener)
+        {
             _eventDispatcher->removeEventListener(_mouseListener);
             _mouseListener = nullptr;
         }
@@ -169,13 +183,15 @@ void FirstPersonController::onExit()
 // =========================================================================
 ax::Vec3 FirstPersonController::getForwardVector() const
 {
-    if (!_camera) return ax::Vec3(0, 0, -1);
+    if (!_camera)
+        return ax::Vec3(0, 0, -1);
     float yaw = AX_DEGREES_TO_RADIANS(_camera->getRotation3D().y);
     ax::Vec3 fwd(-std::sinf(yaw), 0.0f, -std::cosf(yaw));
 
-    if (_freeFlightMode) {
+    if (_freeFlightMode)
+    {
         float pitch = AX_DEGREES_TO_RADIANS(_camera->getRotation3D().x);
-        fwd.y = std::sinf(pitch);
+        fwd.y       = std::sinf(pitch);
         fwd.x *= std::cosf(pitch);
         fwd.z *= std::cosf(pitch);
     }
@@ -185,7 +201,8 @@ ax::Vec3 FirstPersonController::getForwardVector() const
 
 ax::Vec3 FirstPersonController::getRightVector() const
 {
-    if (!_camera) return ax::Vec3(1, 0, 0);
+    if (!_camera)
+        return ax::Vec3(1, 0, 0);
     float yaw = AX_DEGREES_TO_RADIANS(_camera->getRotation3D().y);
     return ax::Vec3(std::cosf(yaw), 0.0f, -std::sinf(yaw)).getNormalized();
 }
@@ -195,21 +212,28 @@ ax::Vec3 FirstPersonController::getRightVector() const
 // =========================================================================
 void FirstPersonController::update(float dt)
 {
-    if (!_enabled || !_camera || dt <= 0.0f) return;
+    if (!_enabled || !_camera || dt <= 0.0f)
+        return;
 
-    if (!_collisionResolver && _chunkMgr) {
+    if (!_collisionResolver && _chunkMgr)
+    {
         _collisionResolver = std::make_unique<VoxelCollisionResolver>(_chunkMgr);
     }
 
-    if (_freeFlightMode) {
+    if (_freeFlightMode)
+    {
         ax::Vec3 pos = _camera->getPosition3D();
         ax::Vec3 fwd = getForwardVector();
         ax::Vec3 rgt = getRightVector();
 
-        if (_keyW) pos += fwd * _moveSpeed * dt;
-        if (_keyS) pos -= fwd * _moveSpeed * dt;
-        if (_keyD) pos += rgt * _moveSpeed * dt;
-        if (_keyA) pos -= rgt * _moveSpeed * dt;
+        if (_keyW)
+            pos += fwd * _moveSpeed * dt;
+        if (_keyS)
+            pos -= fwd * _moveSpeed * dt;
+        if (_keyD)
+            pos += rgt * _moveSpeed * dt;
+        if (_keyA)
+            pos -= rgt * _moveSpeed * dt;
 
         _camera->setPosition3D(pos);
 
@@ -227,20 +251,27 @@ void FirstPersonController::update(float dt)
     // Решение: если чанк под игроком не загружен — замораживаем Y-скорость
     // и пропускаем гравитацию/коллизии. Камера обновляется, горизонтальное
     // движение обрабатывается как обычно (по freeFlight-логике).
-    if (_chunkMgr) {
+    if (_chunkMgr)
+    {
         auto playerChunk = ChunkManager::worldToChunk(_capsule.bottomPos);
-        if (!_chunkMgr->isChunkActive(playerChunk)) {
+        if (!_chunkMgr->isChunkActive(playerChunk))
+        {
             // Чанк под игроком ещё не загружен — замораживаем вертикальную скорость
             _currentVelocity.y = 0.0f;
-            _isGrounded = true;
+            _isGrounded        = true;
 
             // Горизонтальное движение (без коллизий, но это временно)
             ax::Vec3 inputDir(0, 0, 0);
-            if (_keyW) inputDir += getForwardVector();
-            if (_keyS) inputDir -= getForwardVector();
-            if (_keyD) inputDir += getRightVector();
-            if (_keyA) inputDir -= getRightVector();
-            if (inputDir.lengthSquared() > 0.0001f) {
+            if (_keyW)
+                inputDir += getForwardVector();
+            if (_keyS)
+                inputDir -= getForwardVector();
+            if (_keyD)
+                inputDir += getRightVector();
+            if (_keyA)
+                inputDir -= getRightVector();
+            if (inputDir.lengthSquared() > 0.0001f)
+            {
                 inputDir.normalize();
                 _capsule.bottomPos += inputDir * _moveSpeed * dt;
             }
@@ -252,54 +283,66 @@ void FirstPersonController::update(float dt)
     }
 
     ax::Vec3 inputDir(0, 0, 0);
-    if (_keyW) inputDir += getForwardVector();
-    if (_keyS) inputDir -= getForwardVector();
-    if (_keyD) inputDir += getRightVector();
-    if (_keyA) inputDir -= getRightVector();
+    if (_keyW)
+        inputDir += getForwardVector();
+    if (_keyS)
+        inputDir -= getForwardVector();
+    if (_keyD)
+        inputDir += getRightVector();
+    if (_keyA)
+        inputDir -= getRightVector();
 
     bool isInputActive = inputDir.lengthSquared() > 0.0001f;
-    if (isInputActive) {
+    if (isInputActive)
+    {
         inputDir.normalize();
-    } else {
+    }
+    else
+    {
         inputDir = ax::Vec3::ZERO;
     }
 
     _targetVelocity.x = inputDir.x * _moveSpeed;
     _targetVelocity.z = inputDir.z * _moveSpeed;
 
-    float rate = isInputActive
-        ? (_isGrounded ? _groundAccel : _airAccel)
-        : (_isGrounded ? _groundDecel : _airDecel);
+    float rate = isInputActive ? (_isGrounded ? _groundAccel : _airAccel) : (_isGrounded ? _groundDecel : _airDecel);
 
     float lerpFactor = std::min(rate * dt, 1.0f);
 
     _currentVelocity.x = std::lerp(_currentVelocity.x, _targetVelocity.x, lerpFactor);
     _currentVelocity.z = std::lerp(_currentVelocity.z, _targetVelocity.z, lerpFactor);
 
-    if (!isInputActive) {
-        if (std::abs(_currentVelocity.x) < VELOCITY_EPSILON) _currentVelocity.x = 0.0f;
-        if (std::abs(_currentVelocity.z) < VELOCITY_EPSILON) _currentVelocity.z = 0.0f;
+    if (!isInputActive)
+    {
+        if (std::abs(_currentVelocity.x) < VELOCITY_EPSILON)
+            _currentVelocity.x = 0.0f;
+        if (std::abs(_currentVelocity.z) < VELOCITY_EPSILON)
+            _currentVelocity.z = 0.0f;
     }
 
     _currentVelocity.y += _gravity * dt;
 
-    if (_isGrounded && _keySpace) {
+    if (_isGrounded && _keySpace)
+    {
         _currentVelocity.y = _jumpForce;
-        _isGrounded = false;
+        _isGrounded        = false;
     }
 
-    if (_collisionResolver) {
+    if (_collisionResolver)
+    {
         auto result = _collisionResolver->resolve(dt, _currentVelocity, _capsule);
         _isGrounded = result.isGrounded;
 
         _camera->setPosition3D(result.resolvedPosition + ax::Vec3(0, _capsule.height * 0.85f, 0));
         this->setPosition3D(result.resolvedPosition);
 
-        if (result.isGrounded && _currentVelocity.y < 0) {
+        if (result.isGrounded && _currentVelocity.y < 0)
+        {
             _currentVelocity.y = 0.0f;
         }
 
-        if (result.hitCeiling && _currentVelocity.y > 0) {
+        if (result.hitCeiling && _currentVelocity.y > 0)
+        {
             _currentVelocity.y = 0.0f;
         }
 
@@ -307,15 +350,17 @@ void FirstPersonController::update(float dt)
         // Если игрок по какой-либо причине оказался ниже нулевого уровня
         // (просадка FPS, туннелирование, ещё не загруженные чанки),
         // телепортируем на поверхность и сбрасываем скорость.
-        if (_capsule.bottomPos.y < 0.0f) {
+        if (_capsule.bottomPos.y < 0.0f)
+        {
             _capsule.bottomPos.y = 0.0f;
-            _currentVelocity.y = 0.0f;
-            _isGrounded = true;
+            _currentVelocity.y   = 0.0f;
+            _isGrounded          = true;
             _camera->setPosition3D(_capsule.bottomPos + ax::Vec3(0, _capsule.height * 0.85f, 0));
             this->setPosition3D(_capsule.bottomPos);
         }
     }
-    else {
+    else
+    {
         ax::Vec3 newPos = _camera->getPosition3D() + _currentVelocity * dt;
         _camera->setPosition3D(newPos);
         _capsule.bottomPos = newPos - ax::Vec3(0, _capsule.height * 0.85f, 0);
@@ -389,14 +434,24 @@ void FirstPersonController::setupEventListeners()
 
 void FirstPersonController::onMouseMove(ax::Event* event)
 {
-    if (!_enabled || !_camera) return;
+    if (!_enabled || !_camera)
+        return;
     auto* e = static_cast<ax::EventMouse*>(event);
-
 
     // Vec2 delta(e->getDelta());
     // Вычисляем дельту вручную через текущие и предыдущие координаты курсора.
     float currentX = e->getCursorX();
     float currentY = e->getCursorY();
+
+    // Первый ивент после захвата курсора содержит виртуальные координаты GLFW,
+    // которые могут резко отличаться от прежней позиции — пропускаем его,
+    // только запоминая точку отсчёта для следующего движения.
+    if (_firstMouseMove)
+    {
+        _lastMousePos.set(currentX, currentY);
+        _firstMouseMove = false;
+        return;
+    }
 
     float deltaX = currentX - _lastMousePos.x;
     float deltaY = currentY - _lastMousePos.y;
@@ -406,7 +461,8 @@ void FirstPersonController::onMouseMove(ax::Event* event)
 
     Vec2 delta(deltaX, deltaY);
 
-    if (_freeFlightMode && !_isLeftMousePressed) return;
+    if (_freeFlightMode && !_isLeftMousePressed)
+        return;
 
     // Инвертируем управление для режима FPC
     // В режиме полета: движение мыши влево → камера вправо, вверх → вниз
@@ -417,10 +473,13 @@ void FirstPersonController::onMouseMove(ax::Event* event)
     float pitch = _camera->getRotation3D().x - delta.y * _mouseSensitivity * directionMultiplier;
 
     yaw = std::fmod(yaw, 360.0f);
-    if (yaw > 180.0f)  yaw -= 360.0f;
-    if (yaw < -180.0f) yaw += 360.0f;
+    if (yaw > 180.0f)
+        yaw -= 360.0f;
+    if (yaw < -180.0f)
+        yaw += 360.0f;
 
-    if (!_freeFlightMode) {
+    if (!_freeFlightMode)
+    {
         pitch = std::clamp(pitch, -89.0f, 89.0f);
     }
 
