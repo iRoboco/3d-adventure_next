@@ -220,23 +220,37 @@ void FirstPersonController::update(float dt)
         _collisionResolver = std::make_unique<VoxelCollisionResolver>(_chunkMgr);
     }
 
+    // === РЕЖИМ СВОБОДНОГО ПОЛЁТА (FreeFlight / Noclip) ===
     if (_freeFlightMode)
     {
+        /**
+        @brief Множитель скорости для режима полёта.
+        @details Вынесен в constexpr для удобной тонкой настройки без хардкода в логике.
+                 Значение 2.5f делает полёт в 2.5 раза быстрее базового бега,
+                 что соответствует стандартам воксельных игр (Minecraft, Valheim и т.п.).
+                 При необходимости меняется в одном месте, не затрагивая FPS-физику.
+        */
+        constexpr float FLIGHT_SPEED_MULTIPLIER = 2.5f;
+
+        // Эффективная скорость = базовая × множитель полёта
+        float flightSpeed = _moveSpeed * FLIGHT_SPEED_MULTIPLIER;
+
         ax::Vec3 pos = _camera->getPosition3D();
         ax::Vec3 fwd = getForwardVector();
         ax::Vec3 rgt = getRightVector();
 
+        // Применяем flightSpeed вместо _moveSpeed для всех осей перемещения
         if (_keyW)
-            pos += fwd * _moveSpeed * dt;
+            pos += fwd * flightSpeed * dt;
         if (_keyS)
-            pos -= fwd * _moveSpeed * dt;
+            pos -= fwd * flightSpeed * dt;
         if (_keyD)
-            pos += rgt * _moveSpeed * dt;
+            pos += rgt * flightSpeed * dt;
         if (_keyA)
-            pos -= rgt * _moveSpeed * dt;
+            pos -= rgt * flightSpeed * dt;
 
         _camera->setPosition3D(pos);
-
+        // Синхронизация низа капсулы с камерой (высота глаз ≈ 85% высоты капсулы)
         _capsule.bottomPos = pos - ax::Vec3(0, _capsule.height * 0.85f, 0);
         this->setPosition3D(_capsule.bottomPos);
         return;
