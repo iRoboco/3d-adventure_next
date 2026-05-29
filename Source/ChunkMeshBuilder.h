@@ -323,6 +323,8 @@ inline void buildWaterMesh(const ChunkData& data,
     constexpr int CX = CHUNK_SIZE_X;
     constexpr int CY = CHUNK_SIZE_Y;
     constexpr int CZ = CHUNK_SIZE_Z;
+    // ⚠️ Должен совпадать с SEA_LEVEL в GameScene::init()
+    constexpr int SEA_LEVEL = 38;
 
     // UV тайла воды (индекс 4 в атласе 4x4)
     auto [u, v, u2, v2] = calculateTileUV(4);
@@ -374,9 +376,19 @@ inline void buildWaterMesh(const ChunkData& data,
                 float y0 = y, y1 = y + 0.875f;  // Вода опускается на 1/8 блока ниже кромки
                 float z0 = z, z1 = z + 1.0f;
 
+                /**
+                 * @brief Фильтрация внутренних граней воды.
+                 * @details Грань генерируется ТОЛЬКО если:
+                 * 1. Соседний воксель — воздух (BLOCK_AIR && y >= SEA_LEVEL)
+                 * 2. Высота грани >= SEA_LEVEL
+                 * Это отсекает стенки в подводных пещерах, пузырьках и полостях,
+                 * создавая эффект "единой прозрачной среды" при погружении.
+                 * Внешняя поверхность и береговые линии остаются видимыми.
+                 */
+
                 // Верхняя грань снаружи (+Y, нормаль вверх): видна сверху, только если сверху воздух.
                 // Порядок вершин CCW при взгляде сверху.
-                if (getWaterNeighbor(x, y + 1, z) == BLOCK_AIR)
+                if (getWaterNeighbor(x, y + 1, z) == BLOCK_AIR && (y + 1) >= SEA_LEVEL)
                 {
                     addFace({x0, y1, z1, u, v2}, {x1, y1, z1, u2, v2}, {x1, y1, z0, u2, v}, {x0, y1, z0, u, v});
 
@@ -387,13 +399,13 @@ inline void buildWaterMesh(const ChunkData& data,
                 }
 
                 // Боковые грани: рисуем только там, где соседний блок — воздух
-                if (getWaterNeighbor(x + 1, y, z) == BLOCK_AIR)
+                if (getWaterNeighbor(x + 1, y, z) == BLOCK_AIR && y >= SEA_LEVEL)
                     addFace({x1, y0, z0, u, v}, {x1, y1, z0, u, v2}, {x1, y1, z1, u2, v2}, {x1, y0, z1, u2, v});
-                if (getWaterNeighbor(x - 1, y, z) == BLOCK_AIR)
+                if (getWaterNeighbor(x - 1, y, z) == BLOCK_AIR && y >= SEA_LEVEL)
                     addFace({x0, y0, z1, u2, v}, {x0, y1, z1, u2, v2}, {x0, y1, z0, u, v2}, {x0, y0, z0, u, v});
-                if (getWaterNeighbor(x, y, z + 1) == BLOCK_AIR)
+                if (getWaterNeighbor(x, y, z + 1) == BLOCK_AIR && y >= SEA_LEVEL)
                     addFace({x0, y0, z1, u, v}, {x1, y0, z1, u2, v}, {x1, y1, z1, u2, v2}, {x0, y1, z1, u, v2});
-                if (getWaterNeighbor(x, y, z - 1) == BLOCK_AIR)
+                if (getWaterNeighbor(x, y, z - 1) == BLOCK_AIR && y >= SEA_LEVEL)
                     addFace({x1, y0, z0, u2, v}, {x0, y0, z0, u, v}, {x0, y1, z0, u, v2}, {x1, y1, z0, u2, v2});
             }
 }
