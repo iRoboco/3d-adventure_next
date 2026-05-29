@@ -48,4 +48,12 @@ private:
     float _waterTime               = 0.0f;  ///< Накопитель времени для анимации воды
     std::vector<ax::Node*> _waterNodes;     ///< Кэш активных водных нодов для анимации
     bool _cameraUnderwater = false;         ///< Флаг: камера погружена в воду
+
+    /// @brief Полноэкранный 2D-оверлей для имитации подводного освещения.
+    /// Рендерится поверх 3D-сцены default-камерой (depth=0 > 3D-камеры depth=-1).
+    /// setColor/setOpacity на LayerColor безопасны — это чистый 2D DrawNode без Z-буфера.
+    ax::LayerColor* _underwaterOverlay = nullptr;
+
+    /// @brief Плавный коэффициент перехода [0.0=над водой, 1.0=под водой]
+    float _underwaterBlend = 0.0f;
 };

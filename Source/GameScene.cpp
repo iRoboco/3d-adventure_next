@@ -211,6 +211,23 @@ bool GameScene::init()
     this->addChild(_raycaster);
     _playerController->setRaycaster(_raycaster);
 
+    // ============================================================================
+    // Подводный оверлей — полноэкранный 2D-слой синезелёного тинта
+    // Рендерится default 2D-камерой поверх всей 3D-сцены (depth=0 > depth=-1).
+    // Начинаем полностью прозрачным (opacity=0), плавно проявляем в update().
+    // ============================================================================
+    {
+        auto glView = ax::Director::getInstance()->getGLView();
+        float sw    = glView->getFrameSize().width;
+        float sh    = glView->getFrameSize().height;
+        // Синезелёный цвет воды: R=20 G=80 B=120 — холодный подводный оттенок
+        _underwaterOverlay = ax::LayerColor::create(ax::Color4B(20, 80, 120, 0), sw, sh);
+        AX_ASSERT(_underwaterOverlay);
+        // Не назначаем CameraFlag::USER1 — оверлей рендерит default 2D-камера
+        // Высокий z-order чтобы перекрывать любые другие 2D-элементы (HUD и т.д.)
+        this->addChild(_underwaterOverlay, 100);
+    }
+
     // Включаем обработку клавиатуры для перезапуска уровня
     auto listener          = ax::EventListenerKeyboard::create();
     listener->onKeyPressed = AX_CALLBACK_2(GameScene::onKeyPressed, this);
@@ -284,6 +301,23 @@ void GameScene::update(float dt)
         newUnderwater    = (eyeBlock == BLOCK_WATER);
     }
     _cameraUnderwater = newUnderwater;
+
+    // === Подводный оверлей — плавный синезелёный тинт поверх экрана ===
+    // Не трогаем terrain-ноды или материалы: LayerColor — чистый 2D без Z-буфера,
+    // не имеет никакого влияния на 3D depth/blending.
+    if (_underwaterOverlay)
+    {
+        // Плавный переход: 5 ед./сек → полное погружение за ~0.2 сек
+        constexpr float BLEND_SPEED = 5.0f;
+        float target                = _cameraUnderwater ? 1.0f : 0.0f;
+        _underwaterBlend += (target - _underwaterBlend) * std::min(1.0f, BLEND_SPEED * dt);
+        _underwaterBlend = std::clamp(_underwaterBlend, 0.0f, 1.0f);
+
+        // Максимальная opacity оверлея: 160/255 (~63%) — достаточно для ощущения глубины,
+        // но не настолько плотно, чтобы полностью скрыть блоки.
+        uint8_t overlayOpacity = static_cast<uint8_t>(_underwaterBlend * 160.0f);
+        _underwaterOverlay->setOpacity(overlayOpacity);
+    }
 
     // Базовая opacity:
     // - Над водой: 165 (~65%) — полупрозрачная поверхность, дно видно.
