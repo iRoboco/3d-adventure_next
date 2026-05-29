@@ -62,7 +62,16 @@ CollisionResult VoxelCollisionResolver::resolve(float dt, const ax::Vec3& veloci
 
 bool VoxelCollisionResolver::isSolidAt(const ax::Vec3& worldPos) const
 {
-    return _chunkMgr->getBlockAtWorldPos(worldPos) != BLOCK_AIR;
+    // Запрашиваем ID блока по мировым координатам
+    BlockId id = _chunkMgr->getBlockAtWorldPos(worldPos);
+
+    /**
+    @brief Проверка на препятствие для капсулы игрока.
+    @details Возвращает true только для твёрдых блоков (земля, камень, трава).
+             Воздух (BLOCK_AIR) и вода (BLOCK_WATER) трактуются как проходимые среды.
+             Это позволяет игроку падать в воду и свободно перемещаться внутри неё.
+    */
+    return id != BLOCK_AIR && id != BLOCK_WATER;
 }
 
 // =========================================================================
