@@ -226,6 +226,10 @@ void ChunkManager::update(const ax::Vec3& playerWorldPos)
         return;
 
     ChunkKey playerChunk = worldToChunk(playerWorldPos);
+    // [FIX] Пересобираем кандидатов КАЖДЫЙ кадр, а не только при смене чанка.
+    // Чанки, не попавшие в очередь из-за переполнения, получат второй шанс.
+    collectChunksToLoad(playerChunk);
+
     if (playerChunk != _lastPlayerChunk)
     {
         _lastPlayerChunk = playerChunk;
@@ -263,13 +267,13 @@ BlockId ChunkManager::getBlockAtWorldPos(const ax::Vec3& worldPos) const
 // =========================================================================
 void ChunkManager::collectChunksToLoad(const ChunkKey& playerChunk)
 {
-    // Не загружаем новые чанки, если на паузе
     if (_paused)
         return;
 
     int rd = _cfg.renderDistance;
     std::vector<std::pair<int, ChunkKey>> candidates;
     candidates.reserve((rd * 2 + 1) * (rd * 2 + 1));
+
     for (int32_t dx = -rd; dx <= rd; ++dx)
         for (int32_t dz = -rd; dz <= rd; ++dz)
         {
@@ -283,10 +287,21 @@ void ChunkManager::collectChunksToLoad(const ChunkKey& playerChunk)
                 continue;
             candidates.emplace_back(chunkDistance(key, playerChunk), key);
         }
+
     std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+
     for (const auto& [dist, key] : candidates)
     {
-        //  try_emplace — один lookup вместо find + operator[]
+        // [FIX] Сначала пытаемся добавить в очередь. Только при успехе —
+        // помечаем чанк как QueuedForGen и вставляем в _genPendingSet.
+        if (!_genQueue.push(key))
+        {
+            // Очередь переполнена — прекращаем попытки для этого кадра.
+            // Ближайшие чанки уже отсортированы первыми, дальние подождут.
+            break;
+        }
+
+        // push успешен — теперь безопасно создавать/модифицировать запись.
         auto [it, inserted] = _chunks.try_emplace(key);
         auto& entry         = it->second;
         entry.status        = ChunkStatus::QueuedForGen;
@@ -294,9 +309,9 @@ void ChunkManager::collectChunksToLoad(const ChunkKey& playerChunk)
         entry.chunkData.reset();
         entry.dirty = false;
         _genPendingSet.insert(key);
-        _genQueue.push(key);
     }
 }
+
 
 // =========================================================================
 //  collectChunksToUnload

@@ -532,13 +532,14 @@ private:
          * @param k Ключ чанка для генерации
          * @note Если очередь переполнена (size >= maxSize) — задача отбрасывается
          */
-        void push(const ChunkKey& k)
+        bool push(const ChunkKey& key)
         {
             std::lock_guard<std::mutex> lk(mtx);
             if (queue.size() >= maxSize)
-                return;  ///< Защита от переполнения
-            queue.push_back(k);
-            cv.notify_one();  ///< Пробуждает один ожидающий воркер
+                return false;
+            queue.push_back(key);
+            cv.notify_one();
+            return true;
         }
 
         /**
