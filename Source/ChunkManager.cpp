@@ -462,7 +462,11 @@ ax::Node* ChunkManager::buildWaterVisualNode(const ChunkKey& key, ChunkData& dat
     mat->getStateBlock().setBlendFunc(blend);
     mat->getStateBlock().setDepthWrite(false);  // Не ломает Z-буфер при наложении прозрачных слоёв
     mat->getStateBlock().setDepthTest(true);
-    mat->getStateBlock().setCullFace(false);  // Вода видна с обеих сторон
+    // Явно выключаем back-face culling: меш содержит обе ориентации граней
+    // (верхняя грань + инвертированная копия для вида снизу при погружении),
+    // поэтому culling должен быть выключен чтобы обе грани рендерились.
+    mat->getStateBlock().setCullFace(false);
+    mat->getStateBlock().setCullFaceSide(ax::CullFaceSide::BACK);
 
     node->setMaterial(mat);
     node->setColor(ax::Color3B(40, 120, 200));  // Базовый синий тон

@@ -271,12 +271,29 @@ void GameScene::update(float dt)
 {
     Scene::update(dt);
 
-    // === Анимация воды ===
+    // === Анимация воды и детектирование погружения ===
     _waterTime += dt;
 
-    // Плавная пульсация прозрачности (0.15 Гц) для имитации живости поверхности
+    // Определяем, погружена ли камера в воду по позиции глаз игрока.
+    // Глаза располагаются на высоте 0.85 × высота капсулы (1.8) = ~1.53 над подошвой.
+    bool newUnderwater = false;
+    if (_playerController)
+    {
+        ax::Vec3 eyePos  = _playerController->getPlayerPosition() + ax::Vec3(0.0f, 1.53f, 0.0f);
+        BlockId eyeBlock = _chunkMgr.getBlockAtWorldPos(eyePos);
+        newUnderwater    = (eyeBlock == BLOCK_WATER);
+    }
+    _cameraUnderwater = newUnderwater;
+
+    // Базовая opacity:
+    // - Над водой: 165 (~65%) — полупрозрачная поверхность, дно видно.
+    // - Под водой: 220 (~86%) — инвертированная грань почти непрозрачна,
+    //   затеняет блоки выше уровня моря.
+    uint8_t baseOpacity = _cameraUnderwater ? 220u : 165u;
+
+    // Плавная пульсация (0.15 Гц) — живость поверхности
     uint8_t waterOpacity =
-        static_cast<uint8_t>(165 + std::clamp(static_cast<int>(std::sin(_waterTime * 2.0f) * 15.0f), 0, 90));
+        static_cast<uint8_t>(baseOpacity + std::clamp(static_cast<int>(std::sin(_waterTime * 2.0f) * 12.0f), 0, 35));
 
     for (auto* node : _waterNodes)
     {

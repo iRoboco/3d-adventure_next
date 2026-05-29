@@ -41,11 +41,11 @@ private:
     ChunkManager _chunkMgr;
     // Управление камерой и физикой
     FirstPersonController* _playerController = nullptr;
-    ax::Camera*            _mainCamera = nullptr;
+    ax::Camera* _mainCamera                  = nullptr;
     // Абстрактная ссылка для внешних систем (UI, звук, сеть)
-    ax::Node*              _playerNode = nullptr;
-    VoxelRaycasterNode*    _raycaster = nullptr;
-    float                  _waterTime = 0.0f;   ///< Накопитель времени для анимации воды
-    std::vector<ax::Node*> _waterNodes;         ///< Кэш активных водных нодов для анимации
+    ax::Node* _playerNode          = nullptr;
+    VoxelRaycasterNode* _raycaster = nullptr;
+    float _waterTime               = 0.0f;  ///< Накопитель времени для анимации воды
+    std::vector<ax::Node*> _waterNodes;     ///< Кэш активных водных нодов для анимации
+    bool _cameraUnderwater = false;         ///< Флаг: камера погружена в воду
 };
-
