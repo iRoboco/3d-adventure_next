@@ -66,7 +66,7 @@ bool GameScene::init()
 
     // Конфигурация чанков
     ChunkManager::Config cfg;
-    cfg.renderDistance           = 8;
+    cfg.renderDistance           = 10;
     cfg.unloadMargin             = 3;
     cfg.workerThreadCount        = std::max(1u, std::thread::hardware_concurrency() / 2);
     cfg.maxGenerationsPerFrame   = 2;
@@ -77,14 +77,17 @@ bool GameScene::init()
 
     // Генерация мира
     _chunkMgr.setOnGenerate([](ChunkData& chunk) {
+        // Уровень моря вынесен в начало лямбды для использования в обоих циклах
+        constexpr int SEA_LEVEL = 38;
+
         const ChunkKey& key = chunk.getKey();
         auto basePos        = ChunkManager::chunkToWorld(key);
+
         thread_local siv::PerlinNoise perlin(42);
-        thread_local siv::PerlinNoise rockNoise(137);  // ← новый
-        thread_local siv::PerlinNoise dirtNoise(271);  // ← новый
+        thread_local siv::PerlinNoise rockNoise(137);
+        thread_local siv::PerlinNoise dirtNoise(271);
 
         for (int x = 0; x < CHUNK_SIZE_X; ++x)
-        {
             for (int z = 0; z < CHUNK_SIZE_Z; ++z)
             {
                 float wx      = basePos.x + x;
@@ -93,44 +96,48 @@ bool GameScene::init()
                 float biome   = perlin.octave2D_01(wx * 0.005, wz * 0.005, 4) * 15.0f - 5.0f;
                 int surfaceY  = std::clamp(static_cast<int>(terrain + biome + 30), 1, CHUNK_SIZE_Y - 2);
 
-                // Шум для выходов породы на поверхность
                 float rockVal = rockNoise.octave2D_01(wx * 0.08, wz * 0.08, 3);
                 float dirtVal = dirtNoise.octave2D_01(wx * 0.06, wz * 0.06, 2);
 
                 for (int y = 0; y <= surfaceY; ++y)
                 {
-                    constexpr int SEA_LEVEL = 38;
-                    // Если поверхность ниже уровня моря — заполняем столб водой до SEA_LEVEL
-                    if (surfaceY < SEA_LEVEL)
-                    {
-                        for (int y = surfaceY + 1; y <= SEA_LEVEL; ++y)
-                            chunk.setBlock(x, y, z, BLOCK_WATER);
-                    }
-
                     BlockId block;
                     if (y == surfaceY)
                     {
-                        // Камень выбивается там, где rockVal > 0.72
-                        // Земля выбивается там, где dirtVal > 0.65 (но не там, где камень)
+                        /**
+                         * @brief Выбор блока для поверхности террейна
+                         * @details Приоритет: Камень → Водонепроницаемая земля → Земляная кора → Трава
+                         *          Если поверхность ниже SEA_LEVEL, трава не генерируется,
+                         *          так как в природе она распространяется только при контакте с воздухом.
+                         */
                         if (rockVal > 0.72f)
-                            block = BLOCK_STONE;
+                            block = BLOCK_STONE;  // Каменные выступы (игнорирует уровень воды)
+                        else if (surfaceY < SEA_LEVEL)
+                            block = BLOCK_DIRT;  // [FIX #12] Под водой — только земля/камень
                         else if (dirtVal > 0.65f)
-                            block = BLOCK_DIRT;
+                            block = BLOCK_DIRT;  // Земляная корка на суше
                         else
-                            block = BLOCK_GRASS;
+                            block = BLOCK_GRASS;  // Стандартная трава (только выше уровня моря)
                     }
                     else if (y > surfaceY - 4)
                     {
-                        block = BLOCK_DIRT;
+                        block = BLOCK_DIRT;  // Верхний слой грунта (4 блока под поверхностью)
                     }
                     else
                     {
-                        block = BLOCK_STONE;
+                        block = BLOCK_STONE;  // Глубинный камень
                     }
+
                     chunk.setBlock(x, y, z, block);
                 }
+
+                // Заполняем воду от поверхности террейна до уровня моря
+                if (surfaceY < SEA_LEVEL)
+                {
+                    for (int y = surfaceY + 1; y <= SEA_LEVEL; ++y)
+                        chunk.setBlock(x, y, z, BLOCK_WATER);
+                }
             }
-        }
     });
 
     // CameraFlag — маска USER1 на визуализируемые ноды
