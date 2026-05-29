@@ -75,7 +75,7 @@ bool GameScene::init()
     cfg.maxDirtyRebuildsPerFrame = 2;
     _chunkMgr.init(cfg);
 
-    // Коллбеки
+    // Генерация мира
     _chunkMgr.setOnGenerate([](ChunkData& chunk) {
         const ChunkKey& key = chunk.getKey();
         auto basePos        = ChunkManager::chunkToWorld(key);
@@ -99,6 +99,14 @@ bool GameScene::init()
 
                 for (int y = 0; y <= surfaceY; ++y)
                 {
+                    constexpr int SEA_LEVEL = 38;
+                    // Если поверхность ниже уровня моря — заполняем столб водой до SEA_LEVEL
+                    if (surfaceY < SEA_LEVEL)
+                    {
+                        for (int y = surfaceY + 1; y <= SEA_LEVEL; ++y)
+                            chunk.setBlock(x, y, z, BLOCK_WATER);
+                    }
+
                     BlockId block;
                     if (y == surfaceY)
                     {
@@ -134,10 +142,18 @@ bool GameScene::init()
         // Маска USER1 чтобы 3D-камера рендерила этот нод
         node->setCameraMask(static_cast<int>(ax::CameraFlag::USER1));
         this->addChild(node);
+
+        // Если это водный нод — добавляем в список для анимации
+        if (node->getTag() == WATER_NODE_TAG)
+            _waterNodes.push_back(node);
     });
+
     _chunkMgr.setOnUnload([this](ax::Node* node, const ChunkKey& key) {
-        if (node)
-            node->removeFromParentAndCleanup(true);
+        if (!node)
+            return;
+        node->removeFromParentAndCleanup(true);
+        // Удаляем ссылку из кэша анимации (remove-erase idiom)
+        _waterNodes.erase(std::remove(_waterNodes.begin(), _waterNodes.end(), node), _waterNodes.end());
     });
 
     // Создание контроллера
@@ -159,9 +175,9 @@ bool GameScene::init()
     _raycaster->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
     _raycaster->setFaceHighlightColor({1.0f, 1.0f, 1.0f, 0.25f});  // Подсветка грани
     _raycaster->setPlacePreviewColor({0.2f, 0.9f, 0.2f, 0.2f});    // Выбор места кубика
-    _raycaster->setPlacePreviewVisible(true);                      // [FIX #1]
+    _raycaster->setPlacePreviewVisible(true);
 
-    // [FIX #8] Передаем ссылку на капсулу игрока в рейкастер
+    // Передаем ссылку на капсулу игрока в рейкастер
     _raycaster->setPlayerCapsule(&_playerController->getCapsule());
 
     // Коллбек при наведении на блок — меняем цвет подсветки по типу блока
@@ -193,7 +209,7 @@ bool GameScene::init()
     listener->onKeyPressed = AX_CALLBACK_2(GameScene::onKeyPressed, this);
     _eventDispatcher->addEventListenerWithSceneGraphPriority(listener, this);
 
-    // [FIX #10] Изменен приоритет, чтобы GameScene::update вызывалась после FPC
+    // Изменен приоритет, чтобы GameScene::update вызывалась после FPC
     scheduleUpdateWithPriority(10);
 
     // Сбрасываем _lastPlayerChunk чтобы чанки начали грузиться сразу,
@@ -247,6 +263,20 @@ void GameScene::onExit()
 void GameScene::update(float dt)
 {
     Scene::update(dt);
+
+    // === Анимация воды ===
+    _waterTime += dt;
+
+    // Плавная пульсация прозрачности (0.15 Гц) для имитации живости поверхности
+    uint8_t waterOpacity =
+        static_cast<uint8_t>(165 + std::clamp(static_cast<int>(std::sin(_waterTime * 2.0f) * 15.0f), 0, 90));
+
+    for (auto* node : _waterNodes)
+    {
+        if (node)
+            node->setOpacity(waterOpacity);
+    }
+
     ax::Vec3 playerPos = _playerController ? _playerController->getPlayerPosition() : ax::Vec3::ZERO;
     _chunkMgr.update(playerPos);
 }

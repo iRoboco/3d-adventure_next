@@ -552,7 +552,7 @@ void FirstPersonController::onKeyReleased(ax::EventKeyboard::KeyCode code, ax::E
 
 void FirstPersonController::processBlockInteraction(float dt)
 {
-    // [FIX #12] Защита от выполнения при отключенном контроллере
+    // Защита от выполнения при отключенном контроллере
     if (!_enabled)
         return;
 

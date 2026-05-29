@@ -44,7 +44,7 @@ struct VoxelHit
                 static_cast<float>(adjZ()) + 0.5f};
     }
 
-    // [FIX #6] Оператор сравнения для кэширования
+    // Оператор сравнения для кэширования
     bool operator==(const VoxelHit& o) const noexcept
     {
         return bx == o.bx && by == o.by && bz == o.bz && normal == o.normal;
@@ -191,7 +191,7 @@ std::optional<VoxelHit> castRay(const ax::Vec3& origin, const ax::Vec3& dir, flo
     return std::nullopt;
 }
 
-// [FIX #11] Оптимизация двойного getBlockAtWorldPos — кэшируем ID в лямбде
+// Оптимизация двойного getBlockAtWorldPos — кэшируем ID в лямбде
 inline std::optional<VoxelHit> castWorld(const ax::Vec3& origin,
                                          const ax::Vec3& dir,
                                          float maxDistance,
@@ -204,9 +204,10 @@ inline std::optional<VoxelHit> castWorld(const ax::Vec3& origin,
     auto result         = castRay(origin, dir, maxDistance, [mgr, &lastSolidId](int x, int y, int z) -> bool {
         BlockId id = mgr->getBlockAtWorldPos(
             ax::Vec3{static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f, static_cast<float>(z) + 0.5f});
-        if (id != BLOCK_AIR)
+        // Игнорируем воду: луч проходит сквозь неё до твердого блока
+        if (id != BLOCK_AIR && id != BLOCK_WATER)
         {
-            lastSolidId = id;  // Сохраняем ID при первом попадании
+            lastSolidId = id;
             return true;
         }
         return false;
@@ -280,11 +281,11 @@ public:
     void setPlacePreviewColor(const ax::Color4F& c) noexcept { _previewColor = c; }
     void setBreakProgressColor(const ax::Color4F& c) noexcept { _breakColor = c; }
 
-    // [FIX #1] Управление видимостью превью блока
+    // Управление видимостью превью блока
     void setPlacePreviewVisible(bool visible) noexcept { _placePreviewVisible = visible; }
     bool isPlacePreviewVisible() const noexcept { return _placePreviewVisible; }
 
-    // [FIX #8] Установка капсулы игрока для проверки коллизий
+    // Установка капсулы игрока для проверки коллизий
     void setPlayerCapsule(const PlayerCapsule* capsule) { _playerCapsule = capsule; }
 
     // === Коллбеки ===
@@ -317,7 +318,7 @@ private:
     ax::Mesh* createPlacePreviewMesh(const VoxelHit& hit);
     ax::Mesh* createBreakProgressMesh(const VoxelHit& hit, float progress);
 
-    // [FIX CRASH] Материалы кэшируются отдельно. Применяются только после addMesh(),
+    // Материалы кэшируются отдельно. Применяются только после addMesh(),
     // так как setMaterial() в Axmol работает только с существующими мешами в _meshes.
     ax::Material* _highlightMaterial = nullptr;
     ax::Material* _previewMaterial   = nullptr;
@@ -337,14 +338,14 @@ private:
     float _breakProgress       = 0.0f;
 
     // ============================================================================
-    //  [OPT] Вспомогательный класс для динамических мешей.
+    //  Вспомогательный класс для динамических мешей.
     //  Axmol::MeshRenderer не имеет публичного clear(), но хранит мешки в protected _meshes.
     //  Наследуемся, чтобы безопасно очищать массивы и сбрасывать AABB без хаков.
     // ============================================================================
     class DynamicMeshRenderer : public ax::MeshRenderer
     {
     public:
-        // [API] Очищает внутренние векторы мешей и данных вершин.
+        // Очищает внутренние векторы мешей и данных вершин.
         // ax::Vector::clear() автоматически вызывает release() для каждого элемента,
         // поэтому утечек памяти не возникает.
         void clearMeshes()
@@ -360,18 +361,18 @@ private:
     DynamicMeshRenderer* _placePreviewRenderer  = nullptr;
     DynamicMeshRenderer* _breakProgressRenderer = nullptr;
 
-    // [FIX #6] Кэш последнего хита для предотвращения пересоздания мешей каждый кадр
+    // Кэш последнего хита для предотвращения пересоздания мешей каждый кадр
     VoxelHit _lastFaceHighlightHit{};
     bool _faceHighlightDirty = true;
 
-    // [FIX #1] Флаг видимости превью
+    // Флаг видимости превью
     bool _placePreviewVisible = true;
 
-    // [OPT] Флаг для контроля единовременной инициализации кэшированных рендереров.
+    // Флаг для контроля единовременной инициализации кэшированных рендереров.
     // Позволяет отделить этап настройки от этапа обновления в update().
     bool _renderersInitialized = false;
 
-    // [FIX #8] Указатель на капсулу игрока
+    // Указатель на капсулу игрока
     const PlayerCapsule* _playerCapsule = nullptr;
 
     // Цвета
@@ -383,4 +384,48 @@ private:
 
     HitCallback _onHit;
     MissCallback _onMiss;
+
+    // ============================================================================
+    //  Система частиц разрушения
+    // ============================================================================
+    struct BreakParticle
+    {
+        ax::Vec3 position;
+        ax::Vec3 velocity;
+        float lifetime;     // текущее оставшееся время жизни
+        float maxLifetime;  // изначальное время жизни
+        float size;         // размер кубика
+        BlockId blockId;
+        ax::MeshRenderer* renderer = nullptr;
+    };
+
+    struct BreakFragment
+    {
+        ax::Vec3 position;
+        ax::Vec3 velocity;
+        ax::Vec3 angularVelocity;  // вращение
+        ax::Vec3 rotation;
+        float lifetime;
+        float maxLifetime;
+        float size;
+        BlockId blockId;
+        ax::MeshRenderer* renderer = nullptr;
+    };
+
+    void updateParticles(float dt);
+    void spawnDustParticle(const VoxelHit& hit);
+    void spawnBreakFragments(const VoxelHit& hit);
+    void cleanupParticles();
+
+    ax::Mesh* createCubeMesh(float size, BlockId blockId);
+
+    std::vector<BreakParticle> _particles;
+    std::vector<BreakFragment> _fragments;
+
+    // Последний блок, для которого спавнились частицы
+    int _lastParticleSpawnBx = INT_MIN;
+    int _lastParticleSpawnBy = INT_MIN;
+    int _lastParticleSpawnBz = INT_MIN;
+    float _lastBreakProgress = 0.0f;
+    float _dustSpawnAccum    = 0.0f;  // накопитель для спавна пыли
 };

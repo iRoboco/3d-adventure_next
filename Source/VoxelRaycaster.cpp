@@ -113,7 +113,7 @@ void VoxelRaycasterNode::setInteractionMode(BlockInteractionMode mode)
     if (_mode != BlockInteractionMode::BreakHold)
     {
         hideBreakProgress();
-        _breakProgress = 0.0f;  // [FIX #4] Явный сброс прогресса при смене режима
+        _breakProgress = 0.0f;  // Явный сброс прогресса при смене режима
     }
 }
 
@@ -121,7 +121,7 @@ void VoxelRaycasterNode::setInteractionMode(BlockInteractionMode mode)
 //  update — главный цикл с ветвлением по режиму
 // ============================================================================
 
-void VoxelRaycasterNode::update(float /*dt*/)
+void VoxelRaycasterNode::update(float dt)
 {
     if (!_camera || !_mgr)
         return;
@@ -137,7 +137,7 @@ void VoxelRaycasterNode::update(float /*dt*/)
         hideAll();
         if (_onMiss)
             _onMiss();
-        // [FIX #6] Сбрасываем кэш при промахе
+        // Сбрасываем кэш при промахе
         _faceHighlightDirty = true;
         return;
     }
@@ -146,6 +146,8 @@ void VoxelRaycasterNode::update(float /*dt*/)
 
     // Highlight грани — всегда при хите
     updateFaceHighlight(hit);
+    // Обновляем частицы каждый кадр
+    updateParticles(dt);
 
     // Остальной фидбек — по режиму
     switch (_mode)
@@ -163,11 +165,267 @@ void VoxelRaycasterNode::update(float /*dt*/)
     case BlockInteractionMode::BreakHold:
         hidePlacePreview();
         updateBreakProgress(hit);
+        // Спавн пыли при удержании
+        _dustSpawnAccum += dt;
+        if (_dustSpawnAccum >= 0.08f)
+        {  // каждые ~80мс
+            _dustSpawnAccum = 0.0f;
+            spawnDustParticle(hit);
+        }
         break;
     }
 
     if (_onHit)
         _onHit(hit);
+}
+
+// ============================================================================
+//  Меш-билдинг частиц спецэффектов (фрагментов)
+// ============================================================================
+ax::Mesh* VoxelRaycasterNode::createCubeMesh(float size, BlockId blockId)
+{
+    std::vector<ChunkVertex> verts;
+    ax::IndexArray inds;
+
+    auto addFace = [&](const ChunkVertex& v0, const ChunkVertex& v1, const ChunkVertex& v2, const ChunkVertex& v3) {
+        uint16_t base = static_cast<uint16_t>(verts.size());
+        verts.insert(verts.end(), {v0, v1, v2, v3});
+        inds.emplace_back<uint16_t>(base + 0);
+        inds.emplace_back<uint16_t>(base + 1);
+        inds.emplace_back<uint16_t>(base + 2);
+        inds.emplace_back<uint16_t>(base + 0);
+        inds.emplace_back<uint16_t>(base + 2);
+        inds.emplace_back<uint16_t>(base + 3);
+    };
+
+    auto uv = calculateTileUV(getBlockTileIndex(blockId, 2));
+    float u = uv[0], v = uv[1], u2 = uv[2], v2 = uv[3];
+    float s = size;
+
+    // 6 граней куба с центром в (0,0,0)
+    addFace({s, 0, s, u, v}, {s, s, s, u, v2}, {s, s, 0, u2, v2}, {s, 0, 0, u2, v});  // +X
+    addFace({0, 0, 0, u, v}, {0, s, 0, u, v2}, {0, s, s, u2, v2}, {0, 0, s, u2, v});  // -X
+    addFace({0, s, s, u, v2}, {s, s, s, u2, v2}, {s, s, 0, u2, v}, {0, s, 0, u, v});  // +Y
+    addFace({0, 0, 0, u, v2}, {s, 0, 0, u2, v2}, {s, 0, s, u2, v}, {0, 0, s, u, v});  // -Y
+    addFace({0, 0, s, u, v}, {s, 0, s, u2, v}, {s, s, s, u2, v2}, {0, s, s, u, v2});  // +Z
+    addFace({s, 0, 0, u2, v}, {0, 0, 0, u, v}, {0, s, 0, u, v2}, {s, s, 0, u2, v2});  // -Z
+
+    return createMesh(verts, inds, _terrainAtlas);
+}
+
+void VoxelRaycasterNode::spawnDustParticle(const VoxelHit& hit)
+{
+    // Случайная точка на поверхности блока
+    auto randF = [](float lo, float hi) { return lo + (hi - lo) * (rand() / float(RAND_MAX)); };
+
+    BreakParticle p;
+    p.blockId     = hit.blockId;
+    p.size        = randF(0.04f, 0.10f);
+    p.maxLifetime = randF(0.3f, 0.6f);
+    p.lifetime    = p.maxLifetime;
+
+    // Позиция — случайная точка на грани
+    ax::Vec3 base(hit.bx + 0.5f, hit.by + 0.5f, hit.bz + 0.5f);
+    ax::Vec3 n = hit.normal;
+
+    // Два касательных вектора к нормали
+    ax::Vec3 tang, bitang;
+    if (std::abs(n.x) > 0.5f)
+    {
+        tang   = {0, 1, 0};
+        bitang = {0, 0, 1};
+    }
+    else if (std::abs(n.y) > 0.5f)
+    {
+        tang   = {1, 0, 0};
+        bitang = {0, 0, 1};
+    }
+    else
+    {
+        tang   = {1, 0, 0};
+        bitang = {0, 1, 0};
+    }
+
+    float tx   = randF(-0.4f, 0.4f);
+    float bx2  = randF(-0.4f, 0.4f);
+    p.position = base + n * 0.51f + tang * tx + bitang * bx2;
+
+    // Скорость — от грани + случайный разброс
+    p.velocity = n * randF(0.5f, 2.0f) + tang * randF(-1.0f, 1.0f) + bitang * randF(-1.0f, 1.0f) +
+                 ax::Vec3(0, randF(0.5f, 1.5f), 0);  // чуть вверх
+
+    // Создаём рендерер
+    auto* mesh = createCubeMesh(p.size, p.blockId);
+    if (!mesh)
+        return;
+
+    auto* rend = new (std::nothrow) DynamicMeshRenderer();
+    if (!rend || !rend->init())
+    {
+        AX_SAFE_DELETE(rend);
+        return;
+    }
+    rend->autorelease();
+    rend->addMesh(mesh);
+
+    auto* mat = ax::MeshMaterial::createBuiltInMaterial(ax::MeshMaterial::MaterialType::UNLIT, false);
+    if (mat)
+    {
+        mat->setTexture(_terrainAtlas, ax::NTextureData::Usage::Diffuse);
+        ax::BlendFunc blend{};
+        blend.src = ax::backend::BlendFactor::SRC_ALPHA;
+        blend.dst = ax::backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
+        mat->getStateBlock().setBlendFunc(blend);
+        rend->setMaterial(mat);
+    }
+    rend->setCameraMask(static_cast<unsigned short>(ax::CameraFlag::USER1));
+    rend->setPosition3D(p.position);
+    rend->setVisible(true);
+    this->addChild(rend);
+
+    p.renderer = rend;
+    _particles.push_back(p);
+}
+
+void VoxelRaycasterNode::spawnBreakFragments(const VoxelHit& hit)
+{
+    auto randF = [](float lo, float hi) { return lo + (hi - lo) * (rand() / float(RAND_MAX)); };
+
+    // 8–12 фрагментов
+    int count = 8 + (rand() % 5);
+    for (int i = 0; i < count; ++i)
+    {
+        BreakFragment f;
+        f.blockId         = hit.blockId;
+        f.size            = randF(0.12f, 0.28f);
+        f.maxLifetime     = randF(0.5f, 1.0f);
+        f.lifetime        = f.maxLifetime;
+        f.rotation        = ax::Vec3::ZERO;
+        f.angularVelocity = ax::Vec3(randF(-180, 180), randF(-180, 180), randF(-180, 180));
+
+        // Стартовая позиция — внутри блока
+        f.position = ax::Vec3(hit.bx + randF(0.1f, 0.9f), hit.by + randF(0.1f, 0.9f), hit.bz + randF(0.1f, 0.9f));
+
+        // Скорость — от центра блока во все стороны
+        ax::Vec3 center(hit.bx + 0.5f, hit.by + 0.5f, hit.bz + 0.5f);
+        ax::Vec3 dir = f.position - center;
+        if (dir.length() < 0.01f)
+            dir = ax::Vec3(randF(-1, 1), randF(-1, 1), randF(-1, 1));
+        dir.normalize();
+        f.velocity = dir * randF(2.0f, 5.0f) + ax::Vec3(0, randF(1.0f, 3.0f), 0);
+
+        auto* mesh = createCubeMesh(f.size, f.blockId);
+        if (!mesh)
+            continue;
+
+        auto* rend = new (std::nothrow) DynamicMeshRenderer();
+        if (!rend || !rend->init())
+        {
+            AX_SAFE_DELETE(rend);
+            continue;
+        }
+        rend->autorelease();
+        rend->addMesh(mesh);
+
+        auto* mat = ax::MeshMaterial::createBuiltInMaterial(ax::MeshMaterial::MaterialType::UNLIT, false);
+        if (mat)
+        {
+            mat->setTexture(_terrainAtlas, ax::NTextureData::Usage::Diffuse);
+            ax::BlendFunc blend{};
+            blend.src = ax::backend::BlendFactor::SRC_ALPHA;
+            blend.dst = ax::backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
+            mat->getStateBlock().setBlendFunc(blend);
+            mat->getStateBlock().setDepthWrite(false);
+            rend->setMaterial(mat);
+        }
+        rend->setCameraMask(static_cast<unsigned short>(ax::CameraFlag::USER1));
+        rend->setPosition3D(f.position);
+        rend->setVisible(true);
+        this->addChild(rend);
+
+        f.renderer = rend;
+        _fragments.push_back(f);
+    }
+}
+
+void VoxelRaycasterNode::updateParticles(float dt)
+{
+    const float gravity = -9.8f;
+
+    // Обновляем пылевые частицы
+    for (auto& p : _particles)
+    {
+        if (p.lifetime <= 0.0f || !p.renderer)
+            continue;
+        p.lifetime -= dt;
+        p.velocity.y += gravity * dt;
+        p.position += p.velocity * dt;
+
+        float alpha = std::clamp(p.lifetime / p.maxLifetime, 0.0f, 1.0f);
+        // Масштаб: чуть уменьшается со временем
+        float scale = 0.5f + 0.5f * alpha;
+
+        p.renderer->setPosition3D(p.position);
+        p.renderer->setScale(scale);
+        p.renderer->setOpacity(static_cast<uint8_t>(alpha * 200));
+
+        if (p.lifetime <= 0.0f)
+            p.renderer->setVisible(false);
+    }
+
+    // Обновляем фрагменты
+    for (auto& f : _fragments)
+    {
+        if (f.lifetime <= 0.0f || !f.renderer)
+            continue;
+        f.lifetime -= dt;
+        f.velocity.y += gravity * dt;
+        // Трение воздуха
+        f.velocity *= (1.0f - dt * 1.5f);
+        f.position += f.velocity * dt;
+        f.rotation += f.angularVelocity * dt;
+
+        float alpha = std::clamp(f.lifetime / f.maxLifetime, 0.0f, 1.0f);
+        // Плавное исчезновение в последние 40% времени жизни
+        float opacity = (alpha < 0.4f) ? (alpha / 0.4f) : 1.0f;
+
+        f.renderer->setPosition3D(f.position);
+        f.renderer->setRotation3D(f.rotation);
+        f.renderer->setOpacity(static_cast<uint8_t>(opacity * 255));
+
+        if (f.lifetime <= 0.0f)
+            f.renderer->setVisible(false);
+    }
+
+    // Очищаем мёртвые
+    cleanupParticles();
+}
+
+void VoxelRaycasterNode::cleanupParticles()
+{
+    _particles.erase(std::remove_if(_particles.begin(), _particles.end(),
+                                    [this](BreakParticle& p) {
+        if (p.lifetime <= 0.0f && p.renderer)
+        {
+            p.renderer->removeFromParentAndCleanup(true);
+            p.renderer = nullptr;
+            return true;
+        }
+        return false;
+    }),
+                     _particles.end());
+
+    _fragments.erase(std::remove_if(_fragments.begin(), _fragments.end(),
+                                    [this](BreakFragment& f) {
+        if (f.lifetime <= 0.0f && f.renderer)
+        {
+            f.renderer->removeFromParentAndCleanup(true);
+            f.renderer = nullptr;
+            return true;
+        }
+        return false;
+    }),
+                     _fragments.end());
 }
 
 // ============================================================================
@@ -361,7 +619,7 @@ ax::Mesh* VoxelRaycasterNode::createBreakProgressMesh(const VoxelHit& hit, float
 
 void VoxelRaycasterNode::updateFaceHighlight(const VoxelHit& hit)
 {
-    // [OPT] Проверка кэша: если координаты блока и нормаль грани совпадают с прошлым кадром,
+    // Проверка кэша: если координаты блока и нормаль грани совпадают с прошлым кадром,
     // геометрия не изменилась → пропускаем аллокацию меша и обновление рендерера.
     bool sameBlock = _lastFaceHighlightHit.bx == hit.bx && _lastFaceHighlightHit.by == hit.by &&
                      _lastFaceHighlightHit.bz == hit.bz && _lastFaceHighlightHit.normal == hit.normal;
@@ -371,19 +629,19 @@ void VoxelRaycasterNode::updateFaceHighlight(const VoxelHit& hit)
     // Генерируем новую геометрию только при смене целевой грани
     if (auto* mesh = createFaceHighlightMesh(hit))
     {
-        // [API] MeshRenderer::clearMeshes() очищает вектор привязанных мешей без удаления самой ноды.
+        // MeshRenderer::clearMeshes() очищает вектор привязанных мешей без удаления самой ноды.
         // Это безопаснее, чем removeFromParent(), и не вызывает пересчёт графа сцены.
         _faceHighlightRenderer->clearMeshes();
         _faceHighlightRenderer->addMesh(mesh);
 
-        // [FIX CRASH] Применяем кэшированный материал ПОСЛЕ добавления меша.
+        // Применяем кэшированный материал ПОСЛЕ добавления меша.
         // Если вызвать setMaterial() до addMesh(), массив _meshes пуст и вызов будет no-op.
         if (_highlightMaterial)
             _faceHighlightRenderer->setMaterial(_highlightMaterial);
 
         _faceHighlightRenderer->setVisible(true);  // Показываем ноду
 
-        // [FIX] Axmol::Node::setColor() принимает только RGB (Color3B).
+        // Axmol::Node::setColor() принимает только RGB (Color3B).
         // Alpha-канал управляется отдельно через setOpacity().
         _faceHighlightRenderer->setColor(ax::Color3B(static_cast<uint8_t>(_faceColor.r * 255),
                                                      static_cast<uint8_t>(_faceColor.g * 255),
@@ -396,7 +654,7 @@ void VoxelRaycasterNode::updateFaceHighlight(const VoxelHit& hit)
 
 void VoxelRaycasterNode::updatePlacePreview(const VoxelHit& hit)
 {
-    // [FIX #1] Если превью отключено флагом, просто скрываем кэшированную ноду
+    // Если превью отключено флагом, просто скрываем кэшированную ноду
     if (!_placePreviewVisible)
     {
         _placePreviewRenderer->setVisible(false);
@@ -455,7 +713,7 @@ void VoxelRaycasterNode::updateBreakProgress(const VoxelHit& hit)
 //  Скрытие рендереров
 // ============================================================================
 //
-// [OPT] Раньше эти методы вызывали removeFromParentAndCleanup(true),
+// Раньше эти методы вызывали removeFromParentAndCleanup(true),
 // что приводило к полному уничтожению ноды и аллокации новой в следующем кадре.
 // Теперь мы просто меняем флаг видимости кэшированной ноды.
 void VoxelRaycasterNode::hideFaceHighlight()
@@ -494,6 +752,11 @@ bool VoxelRaycasterNode::breakBlock()
     const VoxelHit& h = *_lastHit;
     if (h.t == 0.0f)
         return false;
+    if (h.blockId == BLOCK_WATER)
+        return false;  // Вода не разрушается через рейкастер
+
+    // Спавним фрагменты ДО удаления блока (пока есть hit с blockId)
+    spawnBreakFragments(h);
 
     bool ok = _mgr->setBlockAtWorldPos(
         Vec3{static_cast<float>(h.bx) + 0.5f, static_cast<float>(h.by) + 0.5f, static_cast<float>(h.bz) + 0.5f},
@@ -518,7 +781,7 @@ bool VoxelRaycasterNode::placeBlock(BlockId id)
     if (h.t == 0.0f)
         return false;
 
-    // [FIX #8] Проверка коллизии с капсулой игрока перед установкой блока
+    // Проверка коллизии с капсулой игрока перед установкой блока
     if (_playerCapsule)
     {
         Vec3 bMin(h.adjX(), h.adjY(), h.adjZ());
@@ -545,7 +808,7 @@ bool VoxelRaycasterNode::placeBlock(BlockId id)
 //  Утилиты
 // ============================================================================
 
-// [FIX #7] Унификация вычисления forward-вектора с учетом pitch как в FPC
+// Унификация вычисления forward-вектора с учетом pitch как в FPC
 Vec3 VoxelRaycasterNode::cameraForward(const ax::Camera* cam)
 {
     if (!cam)

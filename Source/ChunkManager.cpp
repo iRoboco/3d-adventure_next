@@ -94,6 +94,8 @@ void ChunkManager::shutdown()
     {
         if (entry.visualNode && _onUnload)
             _onUnload(entry.visualNode, key);
+        if (entry.waterNode && _onUnload)
+            _onUnload(entry.waterNode, key);
     }
     _chunks.clear();
 
@@ -133,7 +135,7 @@ void ChunkManager::pause()
     // до остановки. Без этого при resume они будут «потеряны» в _readyChunks.
     // processReadyChunks() не создаёт новые задачи — просто визуализирует
     // уже готовые данные. Это быстро (создание меша + добавление в сцену).
-    // [FIX #3] Явная передача флага force=true для обработки оставшихся чанков
+    // Явная передача флага force=true для обработки оставшихся чанков
     processReadyChunks(true);
 
     // Шаг 4: Очищаем очередь генерации (при resume заполним заново).
@@ -227,7 +229,7 @@ void ChunkManager::update(const ax::Vec3& playerWorldPos)
 
     ChunkKey playerChunk = worldToChunk(playerWorldPos);
 
-    // [FIX #chank] Пересобираем кандидатов КАЖДЫЙ кадр, а не только при смене чанка.
+    // Пересобираем кандидатов КАЖДЫЙ кадр, а не только при смене чанка.
     // Чанки, отброшенные из-за переполнения очереди в предыдущем кадре,
     // получат второй шанс и корректно добавятся по мере освобождения слотов.
     collectChunksToLoad(playerChunk);
@@ -303,7 +305,7 @@ void ChunkManager::collectChunksToLoad(const ChunkKey& playerChunk)
 
     for (const auto& [dist, key] : candidates)
     {
-        // [FIX #chank + #queue] Сначала проверяем вместимость очереди.
+        // Сначала проверяем вместимость очереди.
         // Метод push() теперь возвращает bool, что позволяет безопасно откатить транзакцию.
         if (!_genQueue.push(key, dist))
         {
@@ -414,11 +416,68 @@ ax::Node* ChunkManager::buildChunkVisualNode(const ChunkKey& key, ChunkData& dat
 }
 
 // =========================================================================
+//  buildWaterVisualNode
+// =========================================================================
+ax::Node* ChunkManager::buildWaterVisualNode(const ChunkKey& key, ChunkData& data)
+{
+    // === Получение данных соседей для бесшовного стыка ===
+    const ChunkData *neighborX0 = nullptr, *neighborX1 = nullptr;
+    const ChunkData *neighborZ0 = nullptr, *neighborZ1 = nullptr;
+    auto getNeighborData = [&](int dx, int dz) -> const ChunkData* {
+        ChunkKey nk{key.x + dx, key.y, key.z + dz};
+        auto nit = _chunks.find(nk);
+        // Проверяем статус Active и наличие данных, чтобы избежать race-conditions
+        if (nit != _chunks.end() && nit->second.status == ChunkStatus::Active && nit->second.chunkData)
+            return nit->second.chunkData.get();
+        return nullptr;
+    };
+    neighborX0 = getNeighborData(-1, 0);
+    neighborX1 = getNeighborData(1, 0);
+    neighborZ0 = getNeighborData(0, -1);
+    neighborZ1 = getNeighborData(0, 1);
+
+    // === Генерация геометрии воды ===
+    std::vector<ChunkVertex> verts;
+    ax::IndexArray inds;
+    buildWaterMesh(data, neighborX0, neighborX1, neighborZ0, neighborZ1, verts, inds);
+    if (verts.empty())
+        return nullptr;  // Вода отсутствует → оптимизация
+
+    ax::Mesh* mesh = createMesh(verts, inds, _terrainAtlas);
+    if (!mesh)
+        return nullptr;
+
+    // === Создание рендерера ===
+    auto* node = ax::MeshRenderer::create();
+    node->addMesh(mesh);
+
+    auto* mat = ax::MeshMaterial::createBuiltInMaterial(ax::MeshMaterial::MaterialType::UNLIT, false);
+    if (mat && _terrainAtlas)
+        mat->setTexture(_terrainAtlas, ax::NTextureData::Usage::Diffuse);
+
+    // Настройка прозрачности и рендер-стейта
+    ax::BlendFunc blend{};
+    blend.src = ax::backend::BlendFactor::SRC_ALPHA;
+    blend.dst = ax::backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
+    mat->getStateBlock().setBlendFunc(blend);
+    mat->getStateBlock().setDepthWrite(false);  // Не ломает Z-буфер при наложении прозрачных слоёв
+    mat->getStateBlock().setDepthTest(true);
+    mat->getStateBlock().setCullFace(false);  // Вода видна с обеих сторон
+
+    node->setMaterial(mat);
+    node->setColor(ax::Color3B(40, 120, 200));  // Базовый синий тон
+    node->setOpacity(178);                      // ~70% прозрачности
+    node->setPosition3D(chunkToWorld(key));
+    node->setTag(WATER_NODE_TAG);  // Тег для быстрого поиска в GameScene
+    return node;
+}
+
+// =========================================================================
 //  processReadyChunks
 // =========================================================================
 void ChunkManager::processReadyChunks(bool force)
 {
-    // [FIX #3] Явная проверка флага паузы с учетом параметра force
+    // Явная проверка флага паузы с учетом параметра force
     if (_paused && !force)
         return;
 
@@ -430,7 +489,7 @@ void ChunkManager::processReadyChunks(bool force)
         ready.swap(_readyChunks);
     }
 
-    // [FIX] Воркеры работают параллельно и завершают задачи в случайном порядке
+    // Воркеры работают параллельно и завершают задачи в случайном порядке
     // (зависит от нагрузки CPU, сложности террейна, кэш-локальности).
     // Без сортировки чанки появлялись бы хаотично, игнорируя приоритет очереди.
     // Сортируем готовые чанки по расстоянию до текущей позиции игрока.
@@ -499,13 +558,14 @@ void ChunkManager::processReadyChunks(bool force)
         }
         ax::Node* chunkNode   = buildChunkVisualNode(key, *it->second.chunkData);
         it->second.visualNode = chunkNode;
+        it->second.waterNode  = buildWaterVisualNode(key, *it->second.chunkData);
         it->second.status     = ChunkStatus::Active;
         it->second.dirty      = false;
         _genPendingSet.erase(key);
         if (_onVisualize)
             _onVisualize(chunkNode, key);
-        // if (it->second.waterNode && _onVisualize)
-        //     _onVisualize(it->second.waterNode, key);
+        if (it->second.waterNode && _onVisualize)
+            _onVisualize(it->second.waterNode, key);
 
         // Помечаем соседей dirty для перестройки стыковых граней
         ChunkKey neighborKeys[] = {
@@ -556,9 +616,14 @@ void ChunkManager::processDirtyChunks()
             entry.visualNode = nullptr;
         }
         entry.visualNode = buildChunkVisualNode(key, *entry.chunkData);
-        entry.dirty      = false;
+        if (entry.waterNode && _onUnload)
+            _onUnload(entry.waterNode, key);
+        entry.waterNode = buildWaterVisualNode(key, *entry.chunkData);
+        entry.dirty     = false;
         if (_onVisualize)
             _onVisualize(entry.visualNode, key);
+        if (entry.waterNode && _onVisualize)
+            _onVisualize(entry.waterNode, key);
     }
 }
 
@@ -581,6 +646,8 @@ void ChunkManager::processUnloadQueue()
         {
             if (mapIt->second.visualNode && _onUnload)
                 _onUnload(mapIt->second.visualNode, key);
+            if (mapIt->second.waterNode && _onUnload)
+                _onUnload(mapIt->second.waterNode, key);
             _chunks.erase(mapIt);
             _genPendingSet.erase(key);
             it = _unloadQueue.erase(it);

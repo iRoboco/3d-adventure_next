@@ -183,7 +183,7 @@ public:
     /// @brief Проверка: находится ли игрок на земле
     bool isGrounded() const { return _isGrounded; }  ///< Возвращает флаг _isGrounded из последнего resolve()
 
-    /// @brief [FIX #8] Геттер для капсулы игрока
+    /// @brief Геттер для капсулы игрока
     const PlayerCapsule& getCapsule() const { return _capsule; }
 
     /// @} // конец группы "Геттеры состояния"

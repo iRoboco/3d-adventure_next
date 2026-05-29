@@ -45,5 +45,7 @@ private:
     // Абстрактная ссылка для внешних систем (UI, звук, сеть)
     ax::Node*              _playerNode = nullptr;
     VoxelRaycasterNode*    _raycaster = nullptr;
+    float                  _waterTime = 0.0f;   ///< Накопитель времени для анимации воды
+    std::vector<ax::Node*> _waterNodes;         ///< Кэш активных водных нодов для анимации
 };
 

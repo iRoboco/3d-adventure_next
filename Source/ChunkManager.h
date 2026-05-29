@@ -37,7 +37,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <queue>  // [FIX] Добавлено для std::priority_queue
+#include <queue>
 
 // ============================================================================
 /** @name Базовые типы и константы
@@ -97,6 +97,16 @@ static constexpr BlockId BLOCK_AIR   = 0;  ///< Пустой блок (возд�
 static constexpr BlockId BLOCK_GRASS = 1;  ///< Блок травы (верхний слой земли)
 static constexpr BlockId BLOCK_STONE = 2;  ///< Каменный блок
 static constexpr BlockId BLOCK_DIRT  = 3;  ///< Блок земли
+static constexpr BlockId BLOCK_WATER = 4;  ///< Блок воды
+
+/// @brief Уникальный тег для идентификации водных нодов в коллбеках визуализации
+static constexpr int WATER_NODE_TAG = 0x574154;  // ASCII 'WAT'
+
+/// @brief Утилита: прозрачный ли блок (воздух или вода)
+inline bool isTransparent(BlockId id)
+{
+    return id == BLOCK_AIR || id == BLOCK_WATER;
+}
 
 /// @name Размеры чанка в блоках
 /// @{
@@ -182,7 +192,7 @@ private:
      */
     static size_t index(int lx, int ly, int lz) noexcept
     {
-        // [FIX #5] Исправлена индексация на Y-major (ly меняется быстрее всего)
+        // Исправлена индексация на Y-major (ly меняется быстрее всего)
         return static_cast<size_t>(ly + lx * CHUNK_SIZE_Y + lz * CHUNK_SIZE_X * CHUNK_SIZE_Y);
     }
 
@@ -246,10 +256,10 @@ public:
         int maxGenerationsPerFrame = 2;  ///< Макс. чанков для визуализации за один кадр
         int maxUnloadsPerFrame     = 4;  ///< Макс. чанков для выгрузки за один кадр
 
-        /// @brief [FIX #15] Лимит очереди генерации для защиты от переполнения памяти
+        /// @brief Лимит очереди генерации для защиты от переполнения памяти
         int maxQueueSize = 128;
 
-        /// @brief [FIX #10] Лимит перестроений мешей dirty-чанков за кадр
+        /// @brief Лимит перестроений мешей dirty-чанков за кадр
         int maxDirtyRebuildsPerFrame = 2;
 
         /// @brief Режим фильтрации текстур атласа
@@ -501,6 +511,7 @@ private:
     {
         ChunkStatus status   = ChunkStatus::None;  ///< Текущий статус в жизненном цикле
         ax::Node* visualNode = nullptr;            ///< Указатель на отрисовываемый нод (если активен)
+        ax::Node* waterNode  = nullptr;            ///< Визуальный нод поверхности воды (прозрачный меш)
 
         /// @brief Хранение данных чанка до выгрузки для:
         /// - Потокобезопасного запроса блоков (VoxelCollisionResolver)
@@ -717,7 +728,7 @@ private:
      *
      * @note Лимит per-frame предотвращает просадки FPS при массовой загрузке
      */
-    // [FIX #3] Добавлен флаг force для возможности обработки очереди при паузе
+    // Добавлен флаг force для возможности обработки очереди при паузе
     void processReadyChunks(bool force = false);
 
     /**
@@ -787,6 +798,16 @@ private:
      *       при первичной генерации и при перестроении dirty-чанков
      */
     ax::Node* buildChunkVisualNode(const ChunkKey& key, ChunkData& data);
+
+    /**
+     * @brief Создаёт визуальный нод для водного меша чанка.
+     * @details Формирует геометрию только для поверхности воды и открытых граней,
+     * контактирующих с воздухом. Использует кросс-чанковые данные для устранения щелей.
+     * @param key Ключ чанка
+     * @param data Воксельные данные чанка
+     * @return ax::Node* или nullptr если вода отсутствует
+     */
+    ax::Node* buildWaterVisualNode(const ChunkKey& key, ChunkData& data);
 
     /// @} // конец группы "Построение визуализации"
 
