@@ -139,6 +139,7 @@ void VoxelRaycasterNode::update(float dt)
             _onMiss();
         // Сбрасываем кэш при промахе
         _faceHighlightDirty = true;
+        updateParticles(dt);  // Фрагменты живут независимо от хита
         return;
     }
 
@@ -203,8 +204,8 @@ ax::Mesh* VoxelRaycasterNode::createCubeMesh(float size, BlockId blockId)
     float s = size;
 
     // 6 граней куба с центром в (0,0,0)
-    addFace({s, 0, s, u, v}, {s, s, s, u, v2}, {s, s, 0, u2, v2}, {s, 0, 0, u2, v});  // +X
-    addFace({0, 0, 0, u, v}, {0, s, 0, u, v2}, {0, s, s, u2, v2}, {0, 0, s, u2, v});  // -X
+    addFace({s, 0, 0, u, v}, {s, s, 0, u, v2}, {s, s, s, u2, v2}, {s, 0, s, u2, v});  // +X
+    addFace({0, 0, s, u, v}, {0, s, s, u, v2}, {0, s, 0, u2, v2}, {0, 0, 0, u2, v});  // -X
     addFace({0, s, s, u, v2}, {s, s, s, u2, v2}, {s, s, 0, u2, v}, {0, s, 0, u, v});  // +Y
     addFace({0, 0, 0, u, v2}, {s, 0, 0, u2, v2}, {s, 0, s, u2, v}, {0, 0, s, u, v});  // -Y
     addFace({0, 0, s, u, v}, {s, 0, s, u2, v}, {s, s, s, u2, v2}, {0, s, s, u, v2});  // +Z
