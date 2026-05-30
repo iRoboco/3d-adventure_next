@@ -333,6 +333,26 @@ void GameScene::update(float dt)
     {
         if (node)
             node->setOpacity(waterOpacity);
+        ax::Vec3 camWorld = _mainCamera ? _mainCamera->getPosition3D() : ax::Vec3::ZERO;
+
+        for (auto* node : _waterNodes)
+        {
+            if (!node)
+                continue;
+
+            node->setOpacity(waterOpacity);  // ваша существующая строка
+
+            // Прокидываем время и позицию камеры в водный шейдер
+            auto* mr = static_cast<ax::MeshRenderer*>(node);
+            if (auto* ps = mr->getProgramState())
+            {
+                auto locTime = ps->getUniformLocation("u_time");
+                auto locCam  = ps->getUniformLocation("u_camWorld");
+                ps->setUniform(locTime, &_waterTime, sizeof(float));
+                ps->setUniform(locCam, &camWorld, sizeof(ax::Vec3));
+            }
+        }
+
     }
 
     ax::Vec3 playerPos = _playerController ? _playerController->getPlayerPosition() : ax::Vec3::ZERO;

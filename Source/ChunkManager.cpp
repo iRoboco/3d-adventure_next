@@ -1,6 +1,8 @@
 #include "ChunkManager.h"
 #include "ChunkMeshBuilder.h"
 #include "PerlinNoise.hpp"
+#include "renderer/backend/ProgramManager.h"
+#include "renderer/backend/ProgramState.h"
 #include <algorithm>
 #include <climits>
 
@@ -451,28 +453,51 @@ ax::Node* ChunkManager::buildWaterVisualNode(const ChunkKey& key, ChunkData& dat
     auto* node = ax::MeshRenderer::create();
     node->addMesh(mesh);
 
+    // --- 1. Базовый материал даёт корректный render-state (blend / depth / cull) ---
     auto* mat = ax::MeshMaterial::createBuiltInMaterial(ax::MeshMaterial::MaterialType::UNLIT, false);
     if (mat && _terrainAtlas)
         mat->setTexture(_terrainAtlas, ax::NTextureData::Usage::Diffuse);
 
-    // Настройка прозрачности и рендер-стейта
     ax::BlendFunc blend{};
     blend.src = ax::backend::BlendFactor::SRC_ALPHA;
     blend.dst = ax::backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
     mat->getStateBlock().setBlendFunc(blend);
-    mat->getStateBlock().setDepthWrite(false);  // Не ломает Z-буфер при наложении прозрачных слоёв
+    mat->getStateBlock().setDepthWrite(false);
     mat->getStateBlock().setDepthTest(true);
-    // Явно выключаем back-face culling: меш содержит обе ориентации граней
-    // (верхняя грань + инвертированная копия для вида снизу при погружении),
-    // поэтому culling должен быть выключен чтобы обе грани рендерились.
     mat->getStateBlock().setCullFace(false);
     mat->getStateBlock().setCullFaceSide(ax::CullFaceSide::BACK);
-
     node->setMaterial(mat);
-    node->setColor(ax::Color3B(40, 120, 200));  // Базовый синий тон
-    node->setOpacity(178);                      // ~70% прозрачности
+
+    // --- 2. Кастомный водный шейдер поверх базового материала ---
+    auto* program = ax::ProgramManager::getInstance()->loadProgram("custom/water_vs", "custom/water_fs",
+                                                                   ax::backend::VertexLayoutType::Unspec);
+    if (program)
+    {
+        auto* ps = new ax::backend::ProgramState(program);
+
+        // Статические uniform'ы (на весь срок жизни нода):
+        ax::Vec3 origin = chunkToWorld(key);  // мировой угол чанка
+        ax::Vec3 sunDir = ax::Vec3(-0.4f, -0.8f, -0.3f);
+        sunDir.normalize();  // ОТ солнца К сцене
+
+        auto locOrigin = ps->getUniformLocation("u_chunkOrigin");
+        auto locLight  = ps->getUniformLocation("u_lightDir");
+        ps->setUniform(locOrigin, &origin, sizeof(ax::Vec3));
+        ps->setUniform(locLight, &sunDir, sizeof(ax::Vec3));
+
+        // Атлас в слот u_tex0 (на случай если материал не пробросит текстуру)
+        if (_terrainAtlas)
+            ps->setTexture(ps->getUniformLocation("u_tex0"), 0, _terrainAtlas->getBackendTexture());
+
+        node->setProgramState(ps);  // заменяет программу, сохраняя state-block
+        ps->release();              // нод удерживает свою ссылку
+    }
+    // Если program == nullptr (шейдер не собран) — остаётся базовый UNLIT-материал.
+
+    node->setColor(ax::Color3B(40, 120, 200));
+    node->setOpacity(178);
     node->setPosition3D(chunkToWorld(key));
-    node->setTag(WATER_NODE_TAG);  // Тег для быстрого поиска в GameScene
+    node->setTag(WATER_NODE_TAG);
     return node;
 }
 
