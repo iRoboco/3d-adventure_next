@@ -46,7 +46,6 @@ private:
     ax::Node* _playerNode          = nullptr;
     VoxelRaycasterNode* _raycaster = nullptr;
     float _waterTime               = 0.0f;  ///< Накопитель времени для анимации воды
-    float _waterUVOffset           = 0.0f;  ///< Смещение UV-прокрутки воды [0..1], растёт во времени
     std::vector<ax::Node*> _waterNodes;     ///< Кэш активных водных нодов для анимации
     bool _cameraUnderwater = false;         ///< Флаг: камера погружена в воду
 

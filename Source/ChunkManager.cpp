@@ -1,6 +1,8 @@
 #include "ChunkManager.h"
 #include "ChunkMeshBuilder.h"
 #include "PerlinNoise.hpp"
+#include "renderer/backend/ProgramManager.h"
+#include "renderer/backend/ProgramState.h"
 #include <algorithm>
 #include <climits>
 
@@ -99,6 +101,9 @@ void ChunkManager::shutdown()
     }
     _chunks.clear();
 
+    // Освобождаем общий водный материал (retain в getOrCreateWaterMaterial)
+    AX_SAFE_RELEASE_NULL(_waterMaterial);
+
     // Сбрасываем текстуру (она может быть удалена из кэша при context lost)
     _terrainAtlas = nullptr;
 
@@ -177,6 +182,9 @@ void ChunkManager::resume()
     {
         _terrainAtlas = ax::Director::getInstance()->getTextureCache()->addImage("textures/terrain_atlas.png");
         applyTextureFilter();
+        // Общий водный материал держит старую (невалидную) текстуру → сбрасываем,
+        // чтобы getOrCreateWaterMaterial пересоздал его с новым атласом.
+        AX_SAFE_RELEASE_NULL(_waterMaterial);
         if (_terrainAtlas)
         {
             // Текстура обновлена, но материал чанков ссылается на старую.
@@ -416,6 +424,40 @@ ax::Node* ChunkManager::buildChunkVisualNode(const ChunkKey& key, ChunkData& dat
 }
 
 // =========================================================================
+//  getOrCreateWaterMaterial — общий render-state-материал для всей воды
+// =========================================================================
+//  Создаётся лениво один раз и retain'ится. Несёт только blend/depth/cull и
+//  привязку атласа к u_tex0; программу водного шейдера каждый нод ставит сам
+//  через setProgramState (нужен per-node u_chunkOrigin). Шаринг безопасен —
+//  Mesh::setProgramState копирует state-block в свой материал, не меняя общий.
+//  Освобождается в shutdown() и сбрасывается при потере контекста в resume().
+ax::MeshMaterial* ChunkManager::getOrCreateWaterMaterial()
+{
+    if (_waterMaterial)
+        return _waterMaterial;
+
+    auto* mat = ax::MeshMaterial::createBuiltInMaterial(ax::MeshMaterial::MaterialType::UNLIT, false);
+    if (!mat)
+        return nullptr;
+
+    if (_terrainAtlas)
+        mat->setTexture(_terrainAtlas, ax::NTextureData::Usage::Diffuse);
+
+    ax::BlendFunc blend{};
+    blend.src = ax::backend::BlendFactor::SRC_ALPHA;
+    blend.dst = ax::backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
+    mat->getStateBlock().setBlendFunc(blend);
+    mat->getStateBlock().setDepthWrite(false);
+    mat->getStateBlock().setDepthTest(true);
+    mat->getStateBlock().setCullFace(false);
+    mat->getStateBlock().setCullFaceSide(ax::CullFaceSide::BACK);
+
+    mat->retain();
+    _waterMaterial = mat;
+    return _waterMaterial;
+}
+
+// =========================================================================
 //  buildWaterVisualNode
 // =========================================================================
 ax::Node* ChunkManager::buildWaterVisualNode(const ChunkKey& key, ChunkData& data)
@@ -451,37 +493,46 @@ ax::Node* ChunkManager::buildWaterVisualNode(const ChunkKey& key, ChunkData& dat
     auto* node = ax::MeshRenderer::create();
     node->addMesh(mesh);
 
-    // Кастомный материал с UV-анимацией (прокрутка текстуры воды в шейдере).
-    auto* mat = ax::MeshMaterial::createWithFilename("shaders/Water.material");
+    // --- 1. Базовый материал даёт корректный render-state (blend / depth / cull) ---
+    // ОБЩИЙ на все водные чанки: Mesh::setProgramState ниже лишь КОПИРУЕТ его
+    // state-block в свой per-node материал и не мутирует общий, поэтому шаринг
+    // безопасен. Это убирает дорогой createBuiltInMaterial(UNLIT) на каждый чанк
+    // (его всё равно тут же заменял setProgramState) — фикс просадки генерации.
+    auto* mat = getOrCreateWaterMaterial();
     if (!mat)
-    {
-        // Фолбэк на встроенный UNLIT, если шейдер/материал недоступны.
-        mat = ax::MeshMaterial::createBuiltInMaterial(ax::MeshMaterial::MaterialType::UNLIT, false);
-    }
-    // u_tex0 привязываем в коде к _terrainAtlas (с NEAREST-фильтрацией),
-    // а не через sampler в .material — иначе parseSampler сбросил бы фильтр в LINEAR
-    // на общем атласе и сломал пиксельность ВСЕХ текстур.
-    if (mat && _terrainAtlas)
-        mat->setTexture(_terrainAtlas, ax::NTextureData::Usage::Diffuse);
-
-    // Настройка прозрачности и рендер-стейта
-    ax::BlendFunc blend{};
-    blend.src = ax::backend::BlendFactor::SRC_ALPHA;
-    blend.dst = ax::backend::BlendFactor::ONE_MINUS_SRC_ALPHA;
-    mat->getStateBlock().setBlendFunc(blend);
-    mat->getStateBlock().setDepthWrite(false);  // Не ломает Z-буфер при наложении прозрачных слоёв
-    mat->getStateBlock().setDepthTest(true);
-    // Явно выключаем back-face culling: меш содержит обе ориентации граней
-    // (верхняя грань + инвертированная копия для вида снизу при погружении),
-    // поэтому culling должен быть выключен чтобы обе грани рендерились.
-    mat->getStateBlock().setCullFace(false);
-    mat->getStateBlock().setCullFaceSide(ax::CullFaceSide::BACK);
-
+        return nullptr;
     node->setMaterial(mat);
-    node->setColor(ax::Color3B(40, 120, 200));  // Базовый синий тон
-    node->setOpacity(178);                      // ~70% прозрачности
+
+    // --- 2. Кастомный водный шейдер поверх базового материала ---
+    auto* program = ax::ProgramManager::getInstance()->loadProgram("custom/water_vs", "custom/water_fs",
+                                                                   ax::backend::VertexLayoutType::Unspec);
+    if (program)
+    {
+        auto* ps = new ax::backend::ProgramState(program);
+
+        // Статические uniform'ы (на весь срок жизни нода):
+        ax::Vec3 origin = chunkToWorld(key);  // мировой угол чанка
+        ax::Vec3 sunDir = ax::Vec3(-0.4f, -0.8f, -0.3f);
+        sunDir.normalize();  // ОТ солнца К сцене
+
+        auto locOrigin = ps->getUniformLocation("u_chunkOrigin");
+        auto locLight  = ps->getUniformLocation("u_lightDir");
+        ps->setUniform(locOrigin, &origin, sizeof(ax::Vec3));
+        ps->setUniform(locLight, &sunDir, sizeof(ax::Vec3));
+
+        // Атлас в слот u_tex0 (на случай если материал не пробросит текстуру)
+        if (_terrainAtlas)
+            ps->setTexture(ps->getUniformLocation("u_tex0"), 0, _terrainAtlas->getBackendTexture());
+
+        node->setProgramState(ps);  // заменяет программу, сохраняя state-block
+        ps->release();              // нод удерживает свою ссылку
+    }
+    // Если program == nullptr (шейдер не собран) — остаётся базовый UNLIT-материал.
+
+    node->setColor(ax::Color3B(40, 120, 200));
+    node->setOpacity(178);
     node->setPosition3D(chunkToWorld(key));
-    node->setTag(WATER_NODE_TAG);  // Тег для быстрого поиска в GameScene
+    node->setTag(WATER_NODE_TAG);
     return node;
 }
 

@@ -80,6 +80,13 @@ include(AXGameTargetSetup)
 # mark app resources, resource will be copy auto after mark
 ax_setup_app_config(${APP_NAME})
 
+# Компиляция кастомных шейдеров в рантайм-формат (SPIR-V/MSL/GLSL)
+ax_target_compile_shaders(${APP_NAME}
+    FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source/shaders/water.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source/shaders/water.frag
+)
+
 # Add any libraries you need to link to the project after this point
 
 # Default Platform-specific setup

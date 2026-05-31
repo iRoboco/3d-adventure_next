@@ -144,9 +144,11 @@ bool GameScene::init()
     _chunkMgr.setOnVisualize([this](ax::Node* node, const ChunkKey& key) {
         if (!node)
             return;
-        // ВАЖНО: определяем водный нод ДО перезаписи тега.
-        // Иначе chunk-key тег затирает WATER_NODE_TAG, и нод не попадает
-        // в _waterNodes — тогда u_offset не обновляется и UV-анимация застывает.
+        // ВАЖНО: водный нод определяем ДО перезаписи тега.
+        // buildWaterVisualNode помечает воду тегом WATER_NODE_TAG. Если затереть
+        // его chunk-key тегом, нод не попадёт в _waterNodes, и цикл анимации в
+        // update() (u_time / u_camWorld) будет работать по пустому списку — вода
+        // станет статичной. Поэтому водному ноду тег НЕ перезаписываем.
         const bool isWater = (node->getTag() == WATER_NODE_TAG);
         if (!isWater)
         {
@@ -298,13 +300,6 @@ void GameScene::update(float dt)
     // === Анимация воды и детектирование погружения ===
     _waterTime += dt;
 
-    // UV-смещение для прокрутки текстуры воды в кастомном шейдере (custom/water_fs).
-    // 0.3 ед./сек, оборачиваем в [0..1] — шейдер всё равно берёт fract(), но держим
-    // значение малым во избежание потери точности float со временем.
-    _waterUVOffset += 0.5f * dt;
-    if (_waterUVOffset > 1.0f)
-        _waterUVOffset -= 1.0f;
-
     // Определяем, погружена ли камера в воду по позиции глаз игрока.
     // Глаза располагаются на высоте 0.85 × высота капсулы (1.8) = ~1.53 над подошвой.
     bool newUnderwater = false;
@@ -343,25 +338,25 @@ void GameScene::update(float dt)
     uint8_t waterOpacity =
         static_cast<uint8_t>(baseOpacity + std::clamp(static_cast<int>(std::sin(_waterTime * 2.0f) * 12.0f), 0, 35));
 
+    const ax::Vec3 camWorld = _mainCamera ? _mainCamera->getPosition3D() : ax::Vec3::ZERO;
+
     for (auto* node : _waterNodes)
     {
         if (!node)
             continue;
-        // Opacity по-прежнему влияет на воду через авто-биндинг u_color в шейдере.
+
+        // Opacity влияет на воду через авто-биндинг u_color в шейдере.
         node->setOpacity(waterOpacity);
 
-        // Передаём смещение прокрутки в кастомный водный шейдер.
-        if (auto* mr = dynamic_cast<ax::MeshRenderer*>(node))
+        // Прокидываем время и позицию камеры в водный шейдер (анимация волн,
+        // Fresnel/specular). У каждого нода собственный ProgramState.
+        auto* mr = static_cast<ax::MeshRenderer*>(node);
+        if (auto* ps = mr->getProgramState())
         {
-            if (auto* mesh = mr->getMeshByIndex(0))
-            {
-                if (auto* ps = mesh->getProgramState())
-                {
-                    auto loc = ps->getUniformLocation("u_offset");
-                    if (loc)
-                        ps->setUniform(loc, &_waterUVOffset, sizeof(_waterUVOffset));
-                }
-            }
+            auto locTime = ps->getUniformLocation("u_time");
+            auto locCam  = ps->getUniformLocation("u_camWorld");
+            ps->setUniform(locTime, &_waterTime, sizeof(float));
+            ps->setUniform(locCam, &camWorld, sizeof(ax::Vec3));
         }
     }
 
