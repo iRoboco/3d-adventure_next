@@ -144,14 +144,21 @@ bool GameScene::init()
     _chunkMgr.setOnVisualize([this](ax::Node* node, const ChunkKey& key) {
         if (!node)
             return;
-        int tag = ((key.x & 0xFFFF) << 16) | (key.z & 0xFFFF);
-        node->setTag(tag);
+        // ВАЖНО: определяем водный нод ДО перезаписи тега.
+        // Иначе chunk-key тег затирает WATER_NODE_TAG, и нод не попадает
+        // в _waterNodes — тогда u_offset не обновляется и UV-анимация застывает.
+        const bool isWater = (node->getTag() == WATER_NODE_TAG);
+        if (!isWater)
+        {
+            int tag = ((key.x & 0xFFFF) << 16) | (key.z & 0xFFFF);
+            node->setTag(tag);
+        }
         // Маска USER1 чтобы 3D-камера рендерила этот нод
         node->setCameraMask(static_cast<int>(ax::CameraFlag::USER1));
         this->addChild(node);
 
         // Если это водный нод — добавляем в список для анимации
-        if (node->getTag() == WATER_NODE_TAG)
+        if (isWater)
             _waterNodes.push_back(node);
     });
 
@@ -291,6 +298,13 @@ void GameScene::update(float dt)
     // === Анимация воды и детектирование погружения ===
     _waterTime += dt;
 
+    // UV-смещение для прокрутки текстуры воды в кастомном шейдере (custom/water_fs).
+    // 0.3 ед./сек, оборачиваем в [0..1] — шейдер всё равно берёт fract(), но держим
+    // значение малым во избежание потери точности float со временем.
+    _waterUVOffset += 0.5f * dt;
+    if (_waterUVOffset > 1.0f)
+        _waterUVOffset -= 1.0f;
+
     // Определяем, погружена ли камера в воду по позиции глаз игрока.
     // Глаза располагаются на высоте 0.85 × высота капсулы (1.8) = ~1.53 над подошвой.
     bool newUnderwater = false;
@@ -331,8 +345,24 @@ void GameScene::update(float dt)
 
     for (auto* node : _waterNodes)
     {
-        if (node)
-            node->setOpacity(waterOpacity);
+        if (!node)
+            continue;
+        // Opacity по-прежнему влияет на воду через авто-биндинг u_color в шейдере.
+        node->setOpacity(waterOpacity);
+
+        // Передаём смещение прокрутки в кастомный водный шейдер.
+        if (auto* mr = dynamic_cast<ax::MeshRenderer*>(node))
+        {
+            if (auto* mesh = mr->getMeshByIndex(0))
+            {
+                if (auto* ps = mesh->getProgramState())
+                {
+                    auto loc = ps->getUniformLocation("u_offset");
+                    if (loc)
+                        ps->setUniform(loc, &_waterUVOffset, sizeof(_waterUVOffset));
+                }
+            }
+        }
     }
 
     ax::Vec3 playerPos = _playerController ? _playerController->getPlayerPosition() : ax::Vec3::ZERO;

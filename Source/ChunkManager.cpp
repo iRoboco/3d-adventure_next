@@ -451,7 +451,16 @@ ax::Node* ChunkManager::buildWaterVisualNode(const ChunkKey& key, ChunkData& dat
     auto* node = ax::MeshRenderer::create();
     node->addMesh(mesh);
 
-    auto* mat = ax::MeshMaterial::createBuiltInMaterial(ax::MeshMaterial::MaterialType::UNLIT, false);
+    // Кастомный материал с UV-анимацией (прокрутка текстуры воды в шейдере).
+    auto* mat = ax::MeshMaterial::createWithFilename("shaders/Water.material");
+    if (!mat)
+    {
+        // Фолбэк на встроенный UNLIT, если шейдер/материал недоступны.
+        mat = ax::MeshMaterial::createBuiltInMaterial(ax::MeshMaterial::MaterialType::UNLIT, false);
+    }
+    // u_tex0 привязываем в коде к _terrainAtlas (с NEAREST-фильтрацией),
+    // а не через sampler в .material — иначе parseSampler сбросил бы фильтр в LINEAR
+    // на общем атласе и сломал пиксельность ВСЕХ текстур.
     if (mat && _terrainAtlas)
         mat->setTexture(_terrainAtlas, ax::NTextureData::Usage::Diffuse);
 
