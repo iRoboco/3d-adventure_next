@@ -21,6 +21,7 @@ layout(location = TEXCOORD0) in vec2 a_texCoord;
 layout(location = TEXCOORD0) out vec2 v_texCoord;
 layout(location = TEXCOORD1) out vec3 v_normal;    // мировая нормаль волны
 layout(location = TEXCOORD2) out vec3 v_worldPos;  // мировая позиция (для Fresnel/specular)
+layout(location = TEXCOORD3) out float v_time;     // время → во фрагментный шейдер (искры)
 
 layout(std140) uniform vs_ub {
     mat4  u_MVPMatrix;    // авто-биндинг движком (Pass::updateMVPUniform)
@@ -76,6 +77,12 @@ void main(void)
     // Нормаль из градиента высоты: N = normalize(-dHdx, 1, -dHdz)
     v_normal   = normalize(vec3(-wf.y, 1.0, -wf.z));
     v_worldPos = worldPos + vec3(0.0, wf.x, 0.0);
+
+    // Передаём время во фрагментный шейдер. ВАЖНО: единственный u_time живёт здесь,
+    // в vs_ub. Дублировать его в fs_ub нельзя — рефлексия юниформов движка хранит
+    // плоскую карту "имя→инфо", и одинаковое имя из фрагментной стадии затирает
+    // вершинную, из-за чего u_time перестаёт доходить до волн (они «замерзают»).
+    v_time = u_time;
 
     // Лёгкий дрейф UV — текстура «течёт» по поверхности
     v_texCoord    = a_texCoord + vec2(u_time * 0.015, u_time * 0.010);

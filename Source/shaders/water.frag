@@ -17,6 +17,7 @@ precision highp int;
 layout(location = TEXCOORD0) in vec2 v_texCoord;
 layout(location = TEXCOORD1) in vec3 v_normal;
 layout(location = TEXCOORD2) in vec3 v_worldPos;
+layout(location = TEXCOORD3) in float v_time;   // время приходит из VS (единственный u_time)
 
 layout(binding = 0) uniform sampler2D u_tex0;  // атлас террейна (тайл воды)
 
@@ -24,7 +25,8 @@ layout(std140) uniform fs_ub {
     vec4  u_color;     // авто-биндинг: цвет/opacity нода (Pass _locColor)
     vec3  u_camWorld;  // мировая позиция камеры (обновляется каждый кадр)
     vec3  u_lightDir;  // направление лучей солнца (ОТ солнца К сцене), нормировано
-    float u_time;      // время (для анимации искр)
+    // u_time НЕ объявляем здесь: он живёт только в vs_ub и приходит как varying v_time
+    // (см. water.vert) — иначе дублирование имени ломает вершинную анимацию волн.
 };
 
 layout(location = SV_Target0) out vec4 FragColor;
@@ -68,9 +70,13 @@ void main(void)
     float specular = pow(NdotH, 220.0) * 1.4;
 
     // --- 3. Анимированные искры на бликовой зоне ---
+    // Положение искр фиксировано по ячейкам, а яркость ПЛАВНО пульсирует во времени.
+    // Раньше floor(u_time*1.7) перерисовывал весь узор скачками → блики «дёргались».
     vec2  gp      = v_worldPos.xz * 7.0;
-    float sparkle = hash(floor(gp) + floor(vec2(u_time * 1.7)));
-    sparkle       = pow(sparkle, 40.0);                  // редкие яркие точки
+    vec2  cell    = floor(gp);
+    float rnd     = hash(cell);
+    float twinkle = 0.5 + 0.5 * sin(v_time * 3.0 + rnd * 6.2831853);  // гладкая пульсация 0..1
+    float sparkle = pow(rnd, 40.0) * pow(twinkle, 4.0);              // редкие яркие точки
     float glint   = sparkle * smoothstep(0.55, 0.95, NdotH) * 2.0;
 
     vec3 color = waterCol + SUN_COLOR * (specular + glint);
