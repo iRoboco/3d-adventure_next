@@ -72,7 +72,10 @@ bool GameScene::init()
     cfg.maxGenerationsPerFrame   = 2;
     cfg.maxUnloadsPerFrame       = 4;
     cfg.maxQueueSize             = 128;
-    cfg.maxDirtyRebuildsPerFrame = 2;
+    // Подняли с 2 до 4: после фиксов мешинга (реалистичный reserve + обрезка по Y)
+    // и отложенной перестройки до «оседания» соседей каждый ребилд стал заметно
+    // дешевле и реже, поэтому осевшую пачку чанков можно разгребать быстрее.
+    cfg.maxDirtyRebuildsPerFrame = 4;
     _chunkMgr.init(cfg);
 
     // Генерация мира

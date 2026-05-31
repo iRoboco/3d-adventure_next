@@ -173,13 +173,24 @@ public:
      * @param lz Локальная координата Z [0; CHUNK_SIZE_Z)
      * @param id Идентификатор блока для записи
      */
-    void setBlock(int lx, int ly, int lz, BlockId id) noexcept { _blocks[index(lx, ly, lz)] = id; }
+    void setBlock(int lx, int ly, int lz, BlockId id) noexcept
+    {
+        _blocks[index(lx, ly, lz)] = id;
+        // Отслеживаем самый высокий непустой блок (включая воду) для обрезки циклов
+        // мешинга по Y. Это консервативная верхняя граница: при удалении блока
+        // (id == BLOCK_AIR) значение не уменьшаем — максимум худшем случае чуть выше
+        // реального, что безопасно (лишь немного лишних итераций, без пропуска геометрии).
+        if (id != BLOCK_AIR && ly > _maxFilledY)
+            _maxFilledY = ly;
+    }
+
+    /// @brief Самый высокий непустой блок (воздух исключён), -1 если чанк весь из воздуха.
+    /// @note Включает воду — используется для общей обрезки циклов мешинга по высоте.
+    int maxFilledY() const noexcept { return _maxFilledY; }
 
     /// @brief Проверка: состоит ли чанк полностью из воздуха (оптимизация рендера)
-    bool isAllAir() const noexcept
-    {
-        return std::all_of(_blocks.begin(), _blocks.end(), [](BlockId b) { return b == BLOCK_AIR; });
-    }
+    /// @note O(1): опирается на отслеживаемый _maxFilledY вместо прохода по всем блокам.
+    bool isAllAir() const noexcept { return _maxFilledY < 0; }
 
     /// @brief Доступ к сырому массиву блоков для прямого доступа (осторожно!)
     std::vector<BlockId>& rawBlocks() noexcept { return _blocks; }
@@ -198,6 +209,7 @@ private:
 
     ChunkKey _key;                 ///< Ключ чанка для идентификации
     std::vector<BlockId> _blocks;  ///< Линейный массив воксельных данных
+    int _maxFilledY = -1;          ///< Самый высокий непустой блок (для обрезки мешинга по Y)
 };
 
 /// @brief Статус жизненного цикла чанка в менеджере

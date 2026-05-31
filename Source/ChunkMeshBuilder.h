@@ -184,8 +184,14 @@ inline void buildChunkMesh(const ChunkData& data,
     constexpr int CY = CHUNK_SIZE_Y;  ///< Размер чанка по Y (256)
     constexpr int CZ = CHUNK_SIZE_Z;  ///< Размер чанка по Z (16)
 
-    // Предварительное резервирование: максимум 24 вершины на блок (6 граней × 4 вершины)
-    vertices.reserve(CX * CY * CZ * 24);
+    // Предварительное резервирование под РЕАЛИСТИЧНУЮ оценку, а не теоретический максимум.
+    // Раньше тут было CX*CY*CZ*24 ≈ 1.5 млн вершин (~31 МБ), которые выделялись и
+    // выбрасывались на КАЖДОМ построении меша — основной источник фризов при генерации
+    // (2 генерации + 2 dirty-перестройки за кадр ⇒ ~125 МБ malloc/free в кадр на старте).
+    // Реальный меш чанка — единицы–десятки тысяч вершин: видимая поверхность + торцевые
+    // «стены» по краям (пока не подъехали соседи). CX*CZ*128 = 32768 вершин (~640 КБ)
+    // с запасом покрывает типичный случай; при недоборе std::vector дорастёт сам.
+    vertices.reserve(CX * CZ * 128);
 
     /**
      * @brief Лямбда-проверка "сплошности" вокселя для Face Culling.
@@ -250,10 +256,16 @@ inline void buildChunkMesh(const ChunkData& data,
         indices.emplace_back<uint16_t>(baseIdx + 3);
     };
 
+    // Обрезаем проход по высоте: выше самого высокого непустого блока чанка только
+    // воздух — там геометрии заведомо нет. Для типичного террейна (~80 из 256) это
+    // срезает 2/3 итераций. Грани смотрят только на блоки ЭТОГО чанка, поэтому
+    // обрезка по локальному максимуму ничего не теряет.
+    const int yMax = std::min(CY - 1, data.maxFilledY());
+
     // Цикл генерации -> Y для кэш-локальности Y-major layout
     for (int z = 0; z < CZ; ++z)
         for (int x = 0; x < CX; ++x)
-            for (int y = 0; y < CY; ++y)
+            for (int y = 0; y <= yMax; ++y)
             {
                 uint16_t bid = data.getBlock(x, y, z);
                 if (bid == BLOCK_AIR || bid == BLOCK_WATER)
@@ -364,10 +376,13 @@ inline void buildWaterMesh(const ChunkData& data,
         return BLOCK_AIR;  // За пределами карты — воздух
     };
 
+    // Вода не поднимается выше самого высокого непустого блока чанка — обрезаем по нему.
+    const int yMax = std::min(CY - 1, data.maxFilledY());
+
     // Порядок циксов Z→X→Y для кэш-локальности (аналогично террейну)
     for (int z = 0; z < CZ; ++z)
         for (int x = 0; x < CX; ++x)
-            for (int y = 0; y < CY; ++y)
+            for (int y = 0; y <= yMax; ++y)
             {
                 if (data.getBlock(x, y, z) != BLOCK_WATER)
                     continue;
