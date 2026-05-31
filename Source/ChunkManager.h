@@ -809,6 +809,18 @@ private:
      */
     ax::Node* buildWaterVisualNode(const ChunkKey& key, ChunkData& data);
 
+    /**
+     * @brief Возвращает общий render-state-материал для всех водных нодов.
+     *
+     * Лениво создаёт и retain'ит единый MeshMaterial (blend/depth/cull + атлас
+     * в u_tex0). Программа водного шейдера ставится per-node через
+     * setProgramState (нужен индивидуальный u_chunkOrigin). Шаринг безопасен:
+     * Mesh::setProgramState копирует state-block в свой материал, не мутируя общий.
+     * Освобождается в shutdown(), сбрасывается при context-loss в resume().
+     * @return MeshMaterial* (retained, владеет ChunkManager) или nullptr при ошибке.
+     */
+    ax::MeshMaterial* getOrCreateWaterMaterial();
+
     /// @} // конец группы "Построение визуализации"
 
     // ========================================================================
@@ -873,6 +885,8 @@ private:
     ChunkKey _lastPlayerChunk{0, 0, 0};  ///< Кэшированный чанк игрока для детектирования перемещения
 
     ax::Texture2D* _terrainAtlas = nullptr;  ///< Кэшированная текстура-атлас тайлов (загружается один раз)
+
+    ax::MeshMaterial* _waterMaterial = nullptr;  ///< Общий render-state-материал воды (lazy, retained)
 
     /// @} // конец группы "Коллбеки и кэш"
 

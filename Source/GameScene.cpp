@@ -144,14 +144,23 @@ bool GameScene::init()
     _chunkMgr.setOnVisualize([this](ax::Node* node, const ChunkKey& key) {
         if (!node)
             return;
-        int tag = ((key.x & 0xFFFF) << 16) | (key.z & 0xFFFF);
-        node->setTag(tag);
+        // ВАЖНО: водный нод определяем ДО перезаписи тега.
+        // buildWaterVisualNode помечает воду тегом WATER_NODE_TAG. Если затереть
+        // его chunk-key тегом, нод не попадёт в _waterNodes, и цикл анимации в
+        // update() (u_time / u_camWorld) будет работать по пустому списку — вода
+        // станет статичной. Поэтому водному ноду тег НЕ перезаписываем.
+        const bool isWater = (node->getTag() == WATER_NODE_TAG);
+        if (!isWater)
+        {
+            int tag = ((key.x & 0xFFFF) << 16) | (key.z & 0xFFFF);
+            node->setTag(tag);
+        }
         // Маска USER1 чтобы 3D-камера рендерила этот нод
         node->setCameraMask(static_cast<int>(ax::CameraFlag::USER1));
         this->addChild(node);
 
         // Если это водный нод — добавляем в список для анимации
-        if (node->getTag() == WATER_NODE_TAG)
+        if (isWater)
             _waterNodes.push_back(node);
     });
 
@@ -329,30 +338,26 @@ void GameScene::update(float dt)
     uint8_t waterOpacity =
         static_cast<uint8_t>(baseOpacity + std::clamp(static_cast<int>(std::sin(_waterTime * 2.0f) * 12.0f), 0, 35));
 
+    const ax::Vec3 camWorld = _mainCamera ? _mainCamera->getPosition3D() : ax::Vec3::ZERO;
+
     for (auto* node : _waterNodes)
     {
-        if (node)
-            node->setOpacity(waterOpacity);
-        ax::Vec3 camWorld = _mainCamera ? _mainCamera->getPosition3D() : ax::Vec3::ZERO;
+        if (!node)
+            continue;
 
-        for (auto* node : _waterNodes)
+        // Opacity влияет на воду через авто-биндинг u_color в шейдере.
+        node->setOpacity(waterOpacity);
+
+        // Прокидываем время и позицию камеры в водный шейдер (анимация волн,
+        // Fresnel/specular). У каждого нода собственный ProgramState.
+        auto* mr = static_cast<ax::MeshRenderer*>(node);
+        if (auto* ps = mr->getProgramState())
         {
-            if (!node)
-                continue;
-
-            node->setOpacity(waterOpacity);  // ваша существующая строка
-
-            // Прокидываем время и позицию камеры в водный шейдер
-            auto* mr = static_cast<ax::MeshRenderer*>(node);
-            if (auto* ps = mr->getProgramState())
-            {
-                auto locTime = ps->getUniformLocation("u_time");
-                auto locCam  = ps->getUniformLocation("u_camWorld");
-                ps->setUniform(locTime, &_waterTime, sizeof(float));
-                ps->setUniform(locCam, &camWorld, sizeof(ax::Vec3));
-            }
+            auto locTime = ps->getUniformLocation("u_time");
+            auto locCam  = ps->getUniformLocation("u_camWorld");
+            ps->setUniform(locTime, &_waterTime, sizeof(float));
+            ps->setUniform(locCam, &camWorld, sizeof(ax::Vec3));
         }
-
     }
 
     ax::Vec3 playerPos = _playerController ? _playerController->getPlayerPosition() : ax::Vec3::ZERO;

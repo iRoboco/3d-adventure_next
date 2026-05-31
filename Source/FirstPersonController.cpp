@@ -140,7 +140,8 @@ void FirstPersonController::setFreeFlightMode(bool enabled)
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                 // Получаем текущую позицию курсора из GLFW для корректной инициализации
                 // Это предотвращает скачок камеры при первом движении мыши после захвата
-                double xpos, ypos;
+                double xpos = 0.0, ypos = 0.0;
+                glfwGetCursorPos(window, &xpos, &ypos);
                 _firstMouseMove = true;
                 _lastMousePos.set(static_cast<float>(xpos), static_cast<float>(ypos));
             }
