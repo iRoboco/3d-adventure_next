@@ -655,10 +655,25 @@ void ChunkManager::processDirtyChunks()
     if (_paused)
         return;
 
+    // Откладываем перестройку, пока хоть один сосед по X/Z ещё стоит в очереди
+    // генерации (_genPendingSet). Иначе чанк перестраивался бы заново на приход
+    // КАЖДОГО из 4 соседей по отдельности (до 4 полных ребилдов вместо одного).
+    // Дождавшись, пока соседи «осядут», схлопываем это в единственную перестройку.
+    // Сосед вне радиуса видимости в набор не попадает — его ждать не будем, и
+    // пограничная «стена» в сторону незагруженной области останется (это корректно).
+    auto neighborsPending = [&](const ChunkKey& k) {
+        const ChunkKey ns[4] = {
+            {k.x - 1, k.y, k.z}, {k.x + 1, k.y, k.z}, {k.x, k.y, k.z - 1}, {k.x, k.y, k.z + 1}};
+        for (const auto& nk : ns)
+            if (_genPendingSet.count(nk))
+                return true;
+        return false;
+    };
+
     std::vector<ChunkKey> dirtyKeys;
     for (auto& [key, entry] : _chunks)
     {
-        if (entry.dirty && entry.status == ChunkStatus::Active && entry.chunkData)
+        if (entry.dirty && entry.status == ChunkStatus::Active && entry.chunkData && !neighborsPending(key))
         {
             dirtyKeys.push_back(key);
             if (static_cast<int>(dirtyKeys.size()) >= _cfg.maxDirtyRebuildsPerFrame)
