@@ -92,7 +92,9 @@ void MainMenuScene::setupPreviewWorld()
     AX_ASSERT(_orbitCamera && "Failed to create orbit camera");
     _orbitCamera->setCameraFlag(CameraFlag::USER1);
     _orbitCamera->setDepth(-1);
-    _orbitCamera->setPosition3D({_worldCenter.x, _orbitHeight, _worldCenter.z - _orbitRadius});
+    _orbitCamera->setPosition3D({_worldCenter.x + std::cos(_orbitAngle) * _orbitRadius,
+                                   _orbitHeight,
+                                   _worldCenter.z + std::sin(_orbitAngle) * _orbitRadius});
     _orbitCamera->lookAt(_worldCenter, Vec3::UNIT_Y);
     addChild(_orbitCamera);
 
