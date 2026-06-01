@@ -4,6 +4,8 @@
 #include "FirstPersonController.h"
 #include "VoxelRaycaster.h"
 
+class PauseOverlay;
+
 /**
 @brief Основная игровая сцена (Gameplay Scene)
 Архитектурные принципы (Steam-ready):
@@ -16,6 +18,11 @@ class GameScene : public ax::Scene
 {
 public:
     static ax::Scene* create();
+
+    /// @brief Создаёт игровую сцену и применяет к ней данные из файла сохранения.
+    /// @return Готовая сцена (если сейв отсутствует/повреждён — мир со спавном по умолчанию).
+    static GameScene* createFromSave();
+
     bool init() override;
 
     // Деструктор для корректного shutdown() ChunkManager
@@ -26,6 +33,14 @@ public:
     // Установка внешней ссылки на нод игрока (для HUD, инвентаря, сетевых систем)
     void setPlayerNode(ax::Node* player) { _playerNode = player; }
     ax::Vec3 getPlayerPosition() const;
+
+    /// @brief Телепортирует игрока в указанную позицию (используется загрузкой сохранения).
+    void setPlayerPosition(const ax::Vec3& pos);
+
+    // === Пауза (оверлей поверх живой сцены) ===
+    void pauseGame();                       ///< Показать меню паузы, заморозить ввод игрока
+    void resumeGame();                      ///< Скрыть меню паузы, вернуть управление
+    bool isPaused() const { return _paused; }
 
 protected:
     // Axmol вызывает эти методы при сворачивании/разворачивании окна
@@ -56,4 +71,8 @@ private:
 
     /// @brief Плавный коэффициент перехода [0.0=над водой, 1.0=под водой]
     float _underwaterBlend = 0.0f;
+
+    // === Состояние паузы ===
+    bool _paused                = false;    ///< На паузе ли игра (ввод заморожен, меню видимо)
+    PauseOverlay* _pauseOverlay = nullptr;  ///< Активный оверлей паузы (nullptr вне паузы)
 };

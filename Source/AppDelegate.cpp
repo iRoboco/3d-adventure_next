@@ -24,8 +24,7 @@
  ****************************************************************************/
 
 #include "AppDelegate.h"
-#include "MainScene.h"
-#include "GameScene.h"
+#include "SplashScene.h"
 
 #define USE_AUDIO_ENGINE 1
 
@@ -80,8 +79,8 @@ bool AppDelegate::applicationDidFinishLaunching()
     renderView->setDesignResolutionSize(designResolutionSize.width, designResolutionSize.height,
                                     ResolutionPolicy::SHOW_ALL);
 
-    // create a scene. it's an autorelease object
-    auto scene = utils::createInstance<GameScene>();
+    // Production scene flow: Splash → MainMenu → Game (см. SceneManager).
+    auto scene = SplashScene::create();
 
     // run
     director->runWithScene(scene);

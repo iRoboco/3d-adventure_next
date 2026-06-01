@@ -1,0 +1,95 @@
+#include "PauseOverlay.h"
+#include "GameScene.h"
+#include "SceneManager.h"
+#include "SaveGameService.h"
+#include "UiTheme.h"
+
+using namespace ax;
+USING_NS_AX_EXT;
+
+namespace
+{
+/// @brief FOURCC-идентификатор render loop меню паузы.
+constexpr std::string_view kPauseLoopId = "#paus";
+}  // namespace
+
+PauseOverlay* PauseOverlay::create(GameScene* owner)
+{
+    auto* ret = new (std::nothrow) PauseOverlay();
+    if (ret && ret->initWithOwner(owner))
+    {
+        ret->autorelease();
+        return ret;
+    }
+    AX_SAFE_DELETE(ret);
+    return nullptr;
+}
+
+bool PauseOverlay::initWithOwner(GameScene* owner)
+{
+    // Затемняющая подложка на весь экран (чистый 2D, без влияния на 3D depth).
+    if (!LayerColor::initWithColor(Color4B(0, 0, 0, 140)))
+        return false;
+
+    _owner = owner;
+
+    // ImGui уже настроен (GameScene::onEnter вызывает ui_theme::setup()),
+    // но вызов идемпотентен — на случай прямого входа в паузу подстрахуемся.
+    ui_theme::setup();
+
+    // Меню паузы рисуем как render loop на сцене-владельце (target = owner),
+    // чтобы трекер событий ImGui был привязан к актуальной игровой сцене.
+    ImGuiPresenter::getInstance()->addRenderLoop(kPauseLoopId, AX_CALLBACK_0(PauseOverlay::onDrawPauseMenu, this),
+                                                 _owner);
+    _loopRegistered = true;
+
+    return true;
+}
+
+void PauseOverlay::onExit()
+{
+    if (_loopRegistered)
+    {
+        ImGuiPresenter::getInstance()->removeRenderLoop(kPauseLoopId);
+        _loopRegistered = false;
+    }
+    LayerColor::onExit();
+}
+
+void PauseOverlay::onDrawPauseMenu()
+{
+    const ImVec2 screen = ImGui::GetIO().DisplaySize;
+
+    ImGui::SetNextWindowPos(ImVec2(screen.x * 0.5f, screen.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(360.0f, 0.0f), ImGuiCond_Always);
+
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
+                                       ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+    ImGui::Begin("##pause", nullptr, flags);
+
+    ImGui::PushFont(nullptr, 38.0f);
+    ui_theme::textCentered("Пауза");
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0.0f, 20.0f));
+
+    ImGui::PushFont(nullptr, 22.0f);
+    if (ui_theme::menuButton("Продолжить") && _owner)
+        _owner->resumeGame();
+
+    if (ui_theme::menuButton("Сохранить") && _owner)
+        SaveGameService::saveGame(_owner);
+
+    if (ui_theme::menuButton("Сохранить и выйти") && _owner)
+    {
+        SaveGameService::saveGame(_owner);
+        SceneManager::goToMainMenu();
+    }
+
+    if (ui_theme::menuButton("В меню (без сохранения)"))
+        SceneManager::goToMainMenu();
+    ImGui::PopFont();
+
+    ImGui::End();
+}

@@ -114,40 +114,51 @@ void FirstPersonController::setEnabled(bool enabled)
     }
 }
 
-void FirstPersonController::setFreeFlightMode(bool enabled)
+void FirstPersonController::setMouseCaptured(bool captured)
 {
-    _freeFlightMode = enabled;
-    auto glView     = ax::Director::getInstance()->getGLView();
+    auto glView = ax::Director::getInstance()->getGLView();
     if (!glView)
         return;
 
-    if (_freeFlightMode)
+    // В свободном полёте курсор всегда видим — захват по запросу игнорируем.
+    if (!captured || _freeFlightMode)
     {
         glView->setCursorVisible(true);
         _isLeftMousePressed = false;
-    }
-    else
-    {
-        glView->setCursorVisible(false);
-// Захват мыши в режиме FPC - курсор фиксируется в центре окна
 #if defined(GLFW_VERSION_MAJOR)
         auto* glViewImpl = dynamic_cast<ax::RenderViewImpl*>(glView);
-        if (glViewImpl)
-        {
-            auto window = glViewImpl->getWindow();
-            if (window)
-            {
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-                // Получаем текущую позицию курсора из GLFW для корректной инициализации
-                // Это предотвращает скачок камеры при первом движении мыши после захвата
-                double xpos = 0.0, ypos = 0.0;
-                glfwGetCursorPos(window, &xpos, &ypos);
-                _firstMouseMove = true;
-                _lastMousePos.set(static_cast<float>(xpos), static_cast<float>(ypos));
-            }
-        }
+        if (glViewImpl && glViewImpl->getWindow())
+            glfwSetInputMode(glViewImpl->getWindow(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 #endif
+        return;
     }
+
+    glView->setCursorVisible(false);
+// Захват мыши в режиме FPC - курсор фиксируется в центре окна
+#if defined(GLFW_VERSION_MAJOR)
+    auto* glViewImpl = dynamic_cast<ax::RenderViewImpl*>(glView);
+    if (glViewImpl)
+    {
+        auto window = glViewImpl->getWindow();
+        if (window)
+        {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            // Получаем текущую позицию курсора из GLFW для корректной инициализации
+            // Это предотвращает скачок камеры при первом движении мыши после захвата
+            double xpos = 0.0, ypos = 0.0;
+            glfwGetCursorPos(window, &xpos, &ypos);
+            _firstMouseMove = true;
+            _lastMousePos.set(static_cast<float>(xpos), static_cast<float>(ypos));
+        }
+    }
+#endif
+}
+
+void FirstPersonController::setFreeFlightMode(bool enabled)
+{
+    _freeFlightMode = enabled;
+    // В свободном полёте курсор свободен; в FPS — захвачен.
+    setMouseCaptured(!enabled);
 }
 
 void FirstPersonController::toggleFlightMode()

@@ -1,10 +1,22 @@
 #include "GameScene.h"
+#include "PauseOverlay.h"
+#include "SaveGameService.h"
+#include "UiTheme.h"
 #include "PerlinNoise.hpp"
 #include <algorithm>
 #include <thread>
 #include <climits>
 
 USING_NS_AX;
+
+namespace
+{
+/// @name Ключи пользовательских настроек (UserDefault) — общие с MainMenuScene.
+/// @{
+constexpr const char* kKeyRenderDistance = "settings.renderDistance";
+constexpr const char* kKeyMouseSens      = "settings.mouseSensitivity";
+/// @}
+}  // namespace
 
 // =========================================================================
 //  Фабричный метод
@@ -15,6 +27,24 @@ ax::Scene* GameScene::create()
     if (ret && ret->init())
     {
         ret->autorelease();
+        return ret;
+    }
+    AX_SAFE_DELETE(ret);
+    return nullptr;
+}
+
+// =========================================================================
+//  Создание из сохранения
+// =========================================================================
+GameScene* GameScene::createFromSave()
+{
+    auto* ret = new (std::nothrow) GameScene();
+    if (ret && ret->init())
+    {
+        ret->autorelease();
+        // Применяем сохранённые данные поверх инициализированного мира.
+        // При отсутствии/повреждении файла остаёмся на спавне по умолчанию.
+        SaveGameService::loadGame(ret);
         return ret;
     }
     AX_SAFE_DELETE(ret);
@@ -64,9 +94,14 @@ bool GameScene::init()
     _skyBox->setCameraMask((unsigned short)CameraFlag::USER1);
     this->addChild(_skyBox);
 
+    // Пользовательские настройки (заданы в меню «Настройки»), с безопасными дефолтами.
+    auto* ud                  = UserDefault::getInstance();
+    const int userRenderDist  = std::clamp(ud->getIntegerForKey(kKeyRenderDistance, 10), 4, 16);
+    const float userMouseSens = std::clamp(ud->getFloatForKey(kKeyMouseSens, 0.1f), 0.02f, 0.40f);
+
     // Конфигурация чанков
     ChunkManager::Config cfg;
-    cfg.renderDistance           = 10;
+    cfg.renderDistance           = userRenderDist;
     cfg.unloadMargin             = 3;
     cfg.workerThreadCount        = std::max(1u, std::thread::hardware_concurrency() / 2);
     cfg.maxGenerationsPerFrame   = 2;
@@ -175,8 +210,8 @@ bool GameScene::init()
         _waterNodes.erase(std::remove(_waterNodes.begin(), _waterNodes.end(), node), _waterNodes.end());
     });
 
-    // Создание контроллера
-    _playerController = FirstPersonController::create(_mainCamera, 10.0f, 0.1f);
+    // Создание контроллера (чувствительность мыши — из настроек)
+    _playerController = FirstPersonController::create(_mainCamera, 10.0f, userMouseSens);
     AX_ASSERT(_playerController && "Failed to create FirstPersonController");
     _playerController->setChunkManager(&_chunkMgr);
     _playerController->setInitialPosition(ax::Vec3(0.0f, 60.0f, 0.0f));
@@ -263,7 +298,12 @@ void GameScene::onEnter()
 {
     Scene::onEnter();
 
-    if (_playerController)
+    // Глобальная идемпотентная инициализация ImGui — нужна для меню паузы,
+    // даже если в игру вошли напрямую (минуя главное меню).
+    ui_theme::setup();
+
+    // При возврате на сцену не «расхватываем» управление, если игра на паузе.
+    if (_playerController && !_paused)
     {
         _playerController->setEnabled(true);
     }
@@ -299,6 +339,11 @@ void GameScene::onExit()
 void GameScene::update(float dt)
 {
     Scene::update(dt);
+
+    // На паузе мир заморожен: не двигаем чанки/воду/игрока. Рендер и меню ImGui
+    // продолжают работать (ImGui рисуется вне планировщика), поэтому FPS не падает.
+    if (_paused)
+        return;
 
     // === Анимация воды и детектирование погружения ===
     _waterTime += dt;
@@ -369,7 +414,59 @@ void GameScene::update(float dt)
 
 ax::Vec3 GameScene::getPlayerPosition() const
 {
-    return _playerNode ? _playerNode->getPosition3D() : ax::Vec3::ZERO;
+    // Возвращаем позицию из контроллера (низ капсулы) — она же используется при сохранении.
+    return _playerController ? _playerController->getPlayerPosition()
+                             : (_playerNode ? _playerNode->getPosition3D() : ax::Vec3::ZERO);
+}
+
+void GameScene::setPlayerPosition(const ax::Vec3& pos)
+{
+    if (_playerController)
+        _playerController->setInitialPosition(pos);
+    // Принудительно пересчитать видимые чанки вокруг новой позиции.
+    _chunkMgr.forceUpdate();
+}
+
+// =========================================================================
+//  Пауза / возобновление
+// =========================================================================
+void GameScene::pauseGame()
+{
+    if (_paused)
+        return;
+    _paused = true;
+
+    // Замораживаем ввод игрока и освобождаем курсор для взаимодействия с меню.
+    if (_playerController)
+    {
+        _playerController->setEnabled(false);
+        _playerController->setMouseCaptured(false);
+    }
+
+    // Затемняющий оверлей + меню паузы на ImGui поверх живой сцены.
+    _pauseOverlay = PauseOverlay::create(this);
+    if (_pauseOverlay)
+        addChild(_pauseOverlay, 999);  // выше подводного оверлея (z=100) и 3D-мира
+}
+
+void GameScene::resumeGame()
+{
+    if (!_paused)
+        return;
+    _paused = false;
+
+    if (_pauseOverlay)
+    {
+        _pauseOverlay->removeFromParent();  // onExit() снимет ImGui render loop
+        _pauseOverlay = nullptr;
+    }
+
+    // Возвращаем управление: захват курсора восстанавливаем только для FPS-режима.
+    if (_playerController)
+    {
+        _playerController->setEnabled(true);
+        _playerController->setMouseCaptured(!_playerController->isFreeFlightMode());
+    }
 }
 
 // =========================================================================
@@ -377,6 +474,16 @@ ax::Vec3 GameScene::getPlayerPosition() const
 // =========================================================================
 void GameScene::onKeyPressed(ax::EventKeyboard::KeyCode keyCode, ax::Event* event)
 {
+    // ESC — переключение паузы (показ/скрытие меню паузы).
+    if (keyCode == ax::EventKeyboard::KeyCode::KEY_ESCAPE)
+    {
+        if (_paused)
+            resumeGame();
+        else
+            pauseGame();
+        return;
+    }
+
     // Перезапуск уровня по нажатию F12
     if (keyCode == ax::EventKeyboard::KeyCode::KEY_F12)
     {

@@ -1,0 +1,291 @@
+#include "MainMenuScene.h"
+#include "SceneManager.h"
+#include "SaveGameService.h"
+#include "UiTheme.h"
+
+#include <cmath>
+#include <algorithm>
+
+using namespace ax;
+USING_NS_AX_EXT;
+
+namespace
+{
+/// @brief FOURCC-идентификатор render loop меню в ImGuiPresenter (начинается с '#').
+constexpr std::string_view kMenuLoopId = "#menu";
+
+/// @name Ключи пользовательских настроек (UserDefault) — общие с GameScene.
+/// @{
+constexpr const char* kKeyRenderDistance = "settings.renderDistance";
+constexpr const char* kKeyMouseSens      = "settings.mouseSensitivity";
+/// @}
+}  // namespace
+
+// =========================================================================
+//  Фабрика / Lifecycle
+// =========================================================================
+MainMenuScene* MainMenuScene::create()
+{
+    auto* scene = new (std::nothrow) MainMenuScene();
+    if (scene && scene->init())
+    {
+        scene->autorelease();
+        return scene;
+    }
+    AX_SAFE_DELETE(scene);
+    return nullptr;
+}
+
+bool MainMenuScene::init()
+{
+    if (!Scene::init())
+        return false;
+
+    setupPreviewWorld();
+
+    // Запускаем игровой цикл для облёта камеры и обновления чанков фона.
+    scheduleUpdate();
+
+    return true;
+}
+
+MainMenuScene::~MainMenuScene()
+{
+    // Полная остановка только при реальном уничтожении сцены.
+    _chunkMgr.shutdown();
+}
+
+void MainMenuScene::onEnter()
+{
+    Scene::onEnter();
+
+    // Глобальная (идемпотентная) инициализация ImGui + регистрация render loop меню.
+    ui_theme::setup();
+    ImGuiPresenter::getInstance()->addRenderLoop(kMenuLoopId, AX_CALLBACK_0(MainMenuScene::onDrawMenu, this), this);
+
+    _chunkMgr.resume();
+}
+
+void MainMenuScene::onExit()
+{
+    // Снимаем render loop, иначе ImGuiPresenter будет звать метод уничтоженной сцены.
+    ImGuiPresenter::getInstance()->removeRenderLoop(kMenuLoopId);
+
+    _chunkMgr.pause();
+    Scene::onExit();
+}
+
+// =========================================================================
+//  3D-превью мира
+// =========================================================================
+void MainMenuScene::setupPreviewWorld()
+{
+    auto glView  = Director::getInstance()->getGLView();
+    float w      = glView->getFrameSize().width;
+    float h      = glView->getFrameSize().height;
+    float aspect = (h > 0.0f) ? (w / h) : 16.0f / 9.0f;
+
+    // Перспективная камера с флагом USER1 рендерит только 3D-ноды и идёт ПЕРЕД 2D
+    // (depth = -1), чтобы меню ImGui рисовалось поверх мира.
+    _orbitCamera = Camera::createPerspective(55.0f, aspect, 0.1f, 1000.0f);
+    AX_ASSERT(_orbitCamera && "Failed to create orbit camera");
+    _orbitCamera->setCameraFlag(CameraFlag::USER1);
+    _orbitCamera->setDepth(-1);
+    _orbitCamera->setPosition3D({_worldCenter.x, _orbitHeight, _worldCenter.z - _orbitRadius});
+    _orbitCamera->lookAt(_worldCenter, Vec3::UNIT_Y);
+    addChild(_orbitCamera);
+
+    // Небо для глубины и красоты превью.
+    auto textureCube = TextureCube::create("envmap_miramar/miramar_lf.tga", "envmap_miramar/miramar_rt.tga",
+                                           "envmap_miramar/miramar_up.tga", "envmap_miramar/miramar_dn.tga",
+                                           "envmap_miramar/miramar_ft.tga", "envmap_miramar/miramar_bk.tga");
+    if (textureCube)
+    {
+        auto skyBox = Skybox::create();
+        skyBox->setTexture(textureCube);
+        skyBox->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
+        addChild(skyBox);
+    }
+
+    setupChunkManager();
+}
+
+void MainMenuScene::setupChunkManager()
+{
+    // Конфигурация под лёгкое превью, а не под геймплей.
+    ChunkManager::Config cfg;
+    cfg.renderDistance         = 5;
+    cfg.workerThreadCount      = 2;
+    cfg.maxGenerationsPerFrame = 4;
+    cfg.unloadMargin           = 1;
+    cfg.textureFilter          = TextureFilterMode::NEAREST;
+    _chunkMgr.init(cfg);
+
+    // Генерация в фоновом потоке: простые аналитические холмы без воды.
+    _chunkMgr.setOnGenerate([this](ChunkData& chunk) { generateMenuTerrain(chunk); });
+
+    // Визуализация в главном потоке: маска USER1, добавление в граф сцены.
+    _chunkMgr.setOnVisualize([this](Node* node, const ChunkKey&) {
+        if (!node)
+            return;
+        node->setCameraMask(static_cast<unsigned short>(CameraFlag::USER1));
+        addChild(node);
+    });
+
+    // Выгрузка в главном потоке: безопасное удаление нода.
+    _chunkMgr.setOnUnload([](Node* node, const ChunkKey&) {
+        if (node)
+            node->removeFromParentAndCleanup(true);
+    });
+
+    // Чанки начинают грузиться немедленно вокруг центра превью.
+    _chunkMgr.forceUpdate();
+}
+
+void MainMenuScene::generateMenuTerrain(ChunkData& chunk)
+{
+    const ChunkKey& key = chunk.getKey();
+    const int baseX     = key.x * CHUNK_SIZE_X;
+    const int baseZ     = key.z * CHUNK_SIZE_Z;
+
+    for (int lz = 0; lz < CHUNK_SIZE_Z; ++lz)
+        for (int lx = 0; lx < CHUNK_SIZE_X; ++lx)
+        {
+            const int wx = baseX + lx;
+            const int wz = baseZ + lz;
+
+            // Комбинация синусов разных частот → мягкий разнообразный рельеф.
+            float heightF = 26.0f + std::sin(wx * 0.15f) * 5.0f + std::cos(wz * 0.15f) * 4.0f +
+                            std::sin((wx + wz) * 0.1f) * 2.0f;
+
+            const int surfaceY = std::max(14, static_cast<int>(std::floor(heightF)));
+
+            for (int ly = 0; ly <= surfaceY; ++ly)
+            {
+                if (ly < surfaceY - 4)
+                    chunk.setBlock(lx, ly, lz, BLOCK_STONE);
+                else if (ly < surfaceY)
+                    chunk.setBlock(lx, ly, lz, BLOCK_DIRT);
+                else
+                    chunk.setBlock(lx, ly, lz, BLOCK_GRASS);
+            }
+        }
+}
+
+// =========================================================================
+//  Игровой цикл — облёт камеры + обновление чанков
+// =========================================================================
+void MainMenuScene::update(float dt)
+{
+    // Параметрическое движение по окружности: x = cx + R·cos(θ), z = cz + R·sin(θ).
+    // Высота фиксирована → стабильный вид «с птичьего полёта».
+    _orbitAngle += _orbitSpeed * dt;
+    const float camX = _worldCenter.x + std::cos(_orbitAngle) * _orbitRadius;
+    const float camZ = _worldCenter.z + std::sin(_orbitAngle) * _orbitRadius;
+
+    if (_orbitCamera)
+    {
+        _orbitCamera->setPosition3D({camX, _orbitHeight, camZ});
+        _orbitCamera->lookAt(_worldCenter, Vec3::UNIT_Y);
+    }
+
+    // Фиксированный центр: ChunkManager держит загруженной область вокруг превью.
+    _chunkMgr.update(_worldCenter);
+}
+
+// =========================================================================
+//  ImGui — главное меню
+// =========================================================================
+void MainMenuScene::onDrawMenu()
+{
+    if (_showSettings)
+    {
+        onDrawSettings();
+        return;
+    }
+
+    const ImVec2 screen = ImGui::GetIO().DisplaySize;
+
+    ImGui::SetNextWindowPos(ImVec2(screen.x * 0.5f, screen.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(380.0f, 0.0f), ImGuiCond_Always);
+
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
+                                       ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+    ImGui::Begin("##mainmenu", nullptr, flags);
+
+    // Заголовок крупным кеглем (динамический размер шрифта ImGui 1.92).
+    ImGui::PushFont(nullptr, 46.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, ui_theme::kAccentHover);
+    ui_theme::textCentered("VOXEL ADVENTURE");
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+
+    ImGui::Dummy(ImVec2(0.0f, 22.0f));
+
+    ImGui::PushFont(nullptr, 22.0f);
+    if (ui_theme::menuButton("Новая игра"))
+        SceneManager::startNewGame();
+
+    // «Продолжить» доступно только при наличии сохранения.
+    const bool hasSave = SaveGameService::hasSave();
+    ImGui::BeginDisabled(!hasSave);
+    if (ui_theme::menuButton("Продолжить"))
+        SceneManager::loadGame();
+    ImGui::EndDisabled();
+
+    if (ui_theme::menuButton("Настройки"))
+        _showSettings = true;
+
+    if (ui_theme::menuButton("Выход"))
+        SceneManager::exitGame();
+    ImGui::PopFont();
+
+    ImGui::End();
+}
+
+// =========================================================================
+//  ImGui — настройки
+// =========================================================================
+void MainMenuScene::onDrawSettings()
+{
+    auto* ud = UserDefault::getInstance();
+
+    const ImVec2 screen = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(screen.x * 0.5f, screen.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Always);
+
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
+                                       ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+    ImGui::Begin("##settings", nullptr, flags);
+
+    ImGui::PushFont(nullptr, 34.0f);
+    ui_theme::textCentered("Настройки");
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0.0f, 16.0f));
+
+    // Дальность прорисовки (в чанках) — читается GameScene при старте новой игры.
+    int renderDistance = ud->getIntegerForKey(kKeyRenderDistance, 10);
+    if (ImGui::SliderInt("Дальность прорисовки", &renderDistance, 4, 16))
+        ud->setIntegerForKey(kKeyRenderDistance, std::clamp(renderDistance, 4, 16));
+
+    // Чувствительность мыши (градусы/пиксель).
+    float mouseSens = ud->getFloatForKey(kKeyMouseSens, 0.1f);
+    if (ImGui::SliderFloat("Чувствительность мыши", &mouseSens, 0.02f, 0.40f, "%.3f"))
+        ud->setFloatForKey(kKeyMouseSens, std::clamp(mouseSens, 0.02f, 0.40f));
+
+    ImGui::Dummy(ImVec2(0.0f, 18.0f));
+
+    ImGui::PushFont(nullptr, 22.0f);
+    if (ui_theme::menuButton("Назад"))
+    {
+        ud->flush();  // фиксируем изменения на диск
+        _showSettings = false;
+    }
+    ImGui::PopFont();
+
+    ImGui::End();
+}
