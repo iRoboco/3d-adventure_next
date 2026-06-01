@@ -521,7 +521,7 @@ ax::Node* ChunkManager::buildWaterVisualNode(const ChunkKey& key, ChunkData& dat
 
         // Статические uniform'ы (на весь срок жизни нода):
         ax::Vec3 origin = chunkToWorld(key);  // мировой угол чанка
-        ax::Vec3 sunDir = ax::Vec3(-0.4f, -0.8f, -0.3f);
+        ax::Vec3 sunDir = ax::Vec3(0.07f, -0.8f, 0.49f);
         sunDir.normalize();  // ОТ солнца К сцене
 
         // Параметры тумана — соответствуют updateChunkFog()
