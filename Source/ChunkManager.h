@@ -316,6 +316,14 @@ public:
      */
     using UnloadCallback = std::function<void(ax::Node*, const ChunkKey&)>;
 
+    /**
+     * @brief Коллбек создания/уничтожения водного нода
+     * @threadsafe Вызывается в ГЛАВНОМ потоке (игровой цикл)
+     * @param node Указатель на водный нод (MeshRenderer)
+     * @note Позволяет сцене отслеживать водные ноды для анимации uniform'ов
+     */
+    using WaterNodeCallback = std::function<void(ax::Node*)>;
+
     /// @} // конец группы "Типы коллбеков"
 
     // ========================================================================
@@ -441,6 +449,12 @@ public:
 
     /// @brief Установка коллбека выгрузки (выполняется в главном потоке)
     void setOnUnload(UnloadCallback cb) { _onUnload = std::move(cb); }
+
+    /// @brief Установка коллбека создания водного нода (выполняется в главном потоке)
+    void setOnWaterNodeCreated(WaterNodeCallback cb) { _onWaterNodeCreated = std::move(cb); }
+
+    /// @brief Установка коллбека уничтожения водного нода (выполняется в главном потоке)
+    void setOnWaterNodeDestroyed(WaterNodeCallback cb) { _onWaterNodeDestroyed = std::move(cb); }
 
     /// @} // конец группы "Установка коллбеков"
 
@@ -901,6 +915,8 @@ private:
     GenerateCallback _onGenerate;    ///< Коллбек генерации (выполняется в воркере)
     VisualizeCallback _onVisualize;  ///< Коллбек визуализации (главный поток)
     UnloadCallback _onUnload;        ///< Коллбек выгрузки (главный поток)
+    WaterNodeCallback _onWaterNodeCreated;   ///< Коллбек создания водного нода (главный поток)
+    WaterNodeCallback _onWaterNodeDestroyed; ///< Коллбек уничтожения водного нода (главный поток)
 
     ChunkKey _lastPlayerChunk{0, 0, 0};  ///< Кэшированный чанк игрока для детектирования перемещения
     ax::Vec3 _playerWorldPos{0, 0, 0};   ///< Мировая позиция игрока (для тумана)

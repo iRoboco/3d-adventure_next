@@ -193,6 +193,15 @@ void MainMenuScene::setupChunkManager()
             node->removeFromParentAndCleanup(true);
     });
 
+    // === Колбеки водных нодов для анимации ===
+    _chunkMgr.setOnWaterNodeCreated([this](Node* node) {
+        _waterNodes.push_back(node);
+    });
+
+    _chunkMgr.setOnWaterNodeDestroyed([this](Node* node) {
+        _waterNodes.erase(std::remove(_waterNodes.begin(), _waterNodes.end(), node), _waterNodes.end());
+    });
+
     // Чанки начинают грузиться немедленно вокруг центра превью.
     _chunkMgr.forceUpdate();
 }
@@ -212,6 +221,45 @@ void MainMenuScene::update(float dt)
     {
         _orbitCamera->setPosition3D({camX, _orbitHeight, camZ});
         _orbitCamera->lookAt(_worldCenter, Vec3::UNIT_Y);
+    }
+
+    // === Анимация воды ===
+    _waterTime += dt;
+
+    // Базовая opacity воды (надводный режим, как в GameScene)
+    uint8_t waterOpacity = static_cast<uint8_t>(165u + std::clamp(
+        static_cast<int>(std::sin(_waterTime * 2.0f) * 12.0f), 0, 35));
+
+    const ax::Vec3 camWorld = _orbitCamera ? _orbitCamera->getPosition3D() : ax::Vec3::ZERO;
+
+    for (auto* node : _waterNodes)
+    {
+        if (!node)
+            continue;
+
+        // Явно выставляем opacity каждый кадр — без этого u_color.a
+        // в шейдере может быть нулевым, и вода становится прозрачной.
+        node->setOpacity(waterOpacity);
+
+        auto* mr = static_cast<ax::MeshRenderer*>(node);
+        if (auto* ps = mr->getProgramState())
+        {
+            auto locTime = ps->getUniformLocation("u_time");
+            auto locCam  = ps->getUniformLocation("u_camWorld");
+            ps->setUniform(locTime, &_waterTime, sizeof(float));
+            ps->setUniform(locCam, &camWorld, sizeof(ax::Vec3));
+
+            // Расширяем fogEnd (по умолчанию = renderDist*CHUNK_SIZE = 160),
+            // чтобы вода не исчезала в пределах видимой области превью.
+            // Камера на орбите R=78, мир расходится на 160 блоков от центра →
+            // макс. дистанция до дальней воды ≈ 240. Берём с запасом.
+            float fogEnd   = 400.0f;
+            float fogStart = fogEnd * 0.55f;
+            auto locFogSt  = ps->getUniformLocation("u_fogStart");
+            auto locFogEnd = ps->getUniformLocation("u_fogEnd");
+            ps->setUniform(locFogSt, &fogStart, sizeof(float));
+            ps->setUniform(locFogEnd, &fogEnd, sizeof(float));
+        }
     }
 
     // Фиксированный центр: ChunkManager держит загруженной область вокруг превью.

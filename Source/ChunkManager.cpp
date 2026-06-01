@@ -96,6 +96,8 @@ void ChunkManager::shutdown()
     {
         if (entry.visualNode && _onUnload)
             _onUnload(entry.visualNode, key);
+        if (entry.waterNode && _onWaterNodeDestroyed)
+            _onWaterNodeDestroyed(entry.waterNode);
         if (entry.waterNode && _onUnload)
             _onUnload(entry.waterNode, key);
     }
@@ -651,6 +653,8 @@ void ChunkManager::processReadyChunks(bool force)
             _onVisualize(chunkNode, key);
         if (it->second.waterNode && _onVisualize)
             _onVisualize(it->second.waterNode, key);
+        if (it->second.waterNode && _onWaterNodeCreated)
+            _onWaterNodeCreated(it->second.waterNode);
 
         // Помечаем соседей dirty для перестройки стыковых граней
         ChunkKey neighborKeys[] = {
@@ -716,6 +720,8 @@ void ChunkManager::processDirtyChunks()
             entry.visualNode = nullptr;
         }
         entry.visualNode = buildChunkVisualNode(key, *entry.chunkData);
+        if (entry.waterNode && _onWaterNodeDestroyed)
+            _onWaterNodeDestroyed(entry.waterNode);
         if (entry.waterNode && _onUnload)
             _onUnload(entry.waterNode, key);
         entry.waterNode = buildWaterVisualNode(key, *entry.chunkData);
@@ -724,6 +730,8 @@ void ChunkManager::processDirtyChunks()
             _onVisualize(entry.visualNode, key);
         if (entry.waterNode && _onVisualize)
             _onVisualize(entry.waterNode, key);
+        if (entry.waterNode && _onWaterNodeCreated)
+            _onWaterNodeCreated(entry.waterNode);
     }
 }
 
@@ -746,6 +754,8 @@ void ChunkManager::processUnloadQueue()
         {
             if (mapIt->second.visualNode && _onUnload)
                 _onUnload(mapIt->second.visualNode, key);
+            if (mapIt->second.waterNode && _onWaterNodeDestroyed)
+                _onWaterNodeDestroyed(mapIt->second.waterNode);
             if (mapIt->second.waterNode && _onUnload)
                 _onUnload(mapIt->second.waterNode, key);
             _chunks.erase(mapIt);
