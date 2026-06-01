@@ -243,6 +243,8 @@ void ChunkManager::update(const ax::Vec3& playerWorldPos)
     if (_paused)
         return;
 
+    _playerWorldPos = playerWorldPos;
+
     ChunkKey playerChunk = worldToChunk(playerWorldPos);
 
     // Пересобираем кандидатов КАЖДЫЙ кадр, а не только при смене чанка.
@@ -261,6 +263,9 @@ void ChunkManager::update(const ax::Vec3& playerWorldPos)
     processReadyChunks();
     processDirtyChunks();
     processUnloadQueue();
+
+    // Обновляем туман на всех чанках
+    updateChunkFog();
 }
 
 // =========================================================================
@@ -425,6 +430,10 @@ ax::Node* ChunkManager::buildChunkVisualNode(const ChunkKey& key, ChunkData& dat
     if (material && _terrainAtlas)
     {
         material->setTexture(_terrainAtlas, ax::NTextureData::Usage::Diffuse);
+        // Включаем альфа-блендинг для тумана (opacity чанка по дистанции)
+        auto& sb = material->getStateBlock();
+        sb.setBlend(true);
+        sb.setBlendFunc(ax::BlendFunc{ax::backend::BlendFactor::SRC_ALPHA, ax::backend::BlendFactor::ONE_MINUS_SRC_ALPHA});
     }
     chunkNode->setMaterial(material);
     chunkNode->setPosition3D(chunkToWorld(key));
@@ -575,10 +584,22 @@ ax::Node* ChunkManager::buildWaterVisualNode(const ChunkKey& key, ChunkData& dat
         ax::Vec3 sunDir = ax::Vec3(-0.4f, -0.8f, -0.3f);
         sunDir.normalize();  // ОТ солнца К сцене
 
-        auto locOrigin = ps->getUniformLocation("u_chunkOrigin");
-        auto locLight  = ps->getUniformLocation("u_lightDir");
+        // Параметры тумана — соответствуют updateChunkFog()
+        float maxDist = static_cast<float>(_cfg.renderDistance * CHUNK_SIZE_X);
+        ax::Vec3 fogColor(0.55f, 0.78f, 0.95f);  // цвет неба
+        float fogStart = maxDist * FOG_START_FACTOR;
+        float fogEnd   = maxDist * FOG_END_FACTOR;
+
+        auto locOrigin  = ps->getUniformLocation("u_chunkOrigin");
+        auto locLight   = ps->getUniformLocation("u_lightDir");
+        auto locFogClr  = ps->getUniformLocation("u_fogColor");
+        auto locFogSt   = ps->getUniformLocation("u_fogStart");
+        auto locFogEnd  = ps->getUniformLocation("u_fogEnd");
         ps->setUniform(locOrigin, &origin, sizeof(ax::Vec3));
         ps->setUniform(locLight, &sunDir, sizeof(ax::Vec3));
+        ps->setUniform(locFogClr, &fogColor, sizeof(ax::Vec3));
+        ps->setUniform(locFogSt, &fogStart, sizeof(float));
+        ps->setUniform(locFogEnd, &fogEnd, sizeof(float));
 
         // Атлас в слот u_tex0 (на случай если материал не пробросит текстуру)
         if (_terrainAtlas)
@@ -806,6 +827,46 @@ void ChunkManager::processUnloadQueue()
         {
             ++it;
         }
+    }
+}
+
+// =========================================================================
+//  updateChunkFog — обновление тумана на чанках по дистанции до игрока
+// =========================================================================
+void ChunkManager::updateChunkFog()
+{
+    float maxDist = static_cast<float>(_cfg.renderDistance * CHUNK_SIZE_X);
+    float fogStartDist = maxDist * FOG_START_FACTOR;
+    float fogEndDist = maxDist * FOG_END_FACTOR;
+    float fogRange = fogEndDist - fogStartDist;
+    if (fogRange <= 0.0f)
+        return;
+
+    float px = _playerWorldPos.x;
+    float pz = _playerWorldPos.z;
+
+    for (auto& [key, entry] : _chunks)
+    {
+        if (entry.status != ChunkStatus::Active)
+            continue;
+
+        // Центр чанка в мировых координатах
+        ax::Vec3 center = chunkToWorld(key);
+        center.x += CHUNK_SIZE_X * 0.5f;
+        center.z += CHUNK_SIZE_Z * 0.5f;
+
+        float dx = center.x - px;
+        float dz = center.z - pz;
+        float dist = std::sqrt(dx * dx + dz * dz);
+
+        float fogFactor = 1.0f - std::clamp((dist - fogStartDist) / fogRange, 0.0f, 1.0f);
+        uint8_t opacity = static_cast<uint8_t>(fogFactor * 255.0f);
+
+        if (entry.visualNode)
+            entry.visualNode->setOpacity(opacity);
+        if (entry.furNode)
+            entry.furNode->setOpacity(opacity);
+        // Вода не трогаем — у неё кастомный шейдер с per-pixel туманом
     }
 }
 

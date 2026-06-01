@@ -254,6 +254,11 @@ public:
      *  @{ */
     // ========================================================================
 
+    /// @brief Множитель начала тумана (доля от renderDistance)
+    static constexpr float FOG_START_FACTOR = 0.55f;
+    /// @brief Множитель полного тумана (доля от renderDistance)
+    static constexpr float FOG_END_FACTOR = 1.0f;
+
     /**
      * @brief Параметры настройки поведения менеджера
      *
@@ -869,6 +874,9 @@ private:
         return std::max({std::abs(a.x - b.x), std::abs(a.y - b.y), std::abs(a.z - b.z)});
     }
 
+    /// @brief Обновление тумана — устанавливает opacity чанков по дистанции от игрока
+    void updateChunkFog();
+
     /// @} // конец группы "Приватные утилиты"
 
     // ========================================================================
@@ -912,6 +920,7 @@ private:
     UnloadCallback _onUnload;        ///< Коллбек выгрузки (главный поток)
 
     ChunkKey _lastPlayerChunk{0, 0, 0};  ///< Кэшированный чанк игрока для детектирования перемещения
+    ax::Vec3 _playerWorldPos{0, 0, 0};   ///< Мировая позиция игрока (для тумана)
 
     ax::Texture2D* _terrainAtlas = nullptr;  ///< Кэшированная текстура-атлас тайлов (загружается один раз)
 

@@ -25,6 +25,9 @@ layout(std140) uniform fs_ub {
     vec4  u_color;     // авто-биндинг: цвет/opacity нода (Pass _locColor)
     vec3  u_camWorld;  // мировая позиция камеры (обновляется каждый кадр)
     vec3  u_lightDir;  // направление лучей солнца (ОТ солнца К сцене), нормировано
+    vec3  u_fogColor;  // цвет тумана
+    float u_fogStart;  // дистанция начала тумана (мировые единицы)
+    float u_fogEnd;    // дистанция полного тумана (мировые единицы)
     // u_time НЕ объявляем здесь: он живёт только в vs_ub и приходит как varying v_time
     // (см. water.vert) — иначе дублирование имени ломает вершинную анимацию волн.
 };
@@ -88,6 +91,13 @@ void main(void)
 
     // Альфа: из нода + усиление на бликах/гранях (вода у кромки плотнее)
     float alpha = clamp(u_color.a + fresnel * 0.18 + specular * 0.5, 0.0, 1.0);
+
+    // --- 5. Distance fog — плавное слияние воды с туманом ---
+    float fogDist = length(u_camWorld - v_worldPos);
+    float fogFactor = 1.0 - clamp((fogDist - u_fogStart) / (u_fogEnd - u_fogStart), 0.0, 1.0);
+    fogFactor = clamp(fogFactor, 0.0, 1.0);
+    color = mix(u_fogColor, color, fogFactor);
+    alpha *= fogFactor;
 
     FragColor = vec4(color, alpha);
 }

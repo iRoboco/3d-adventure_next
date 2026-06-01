@@ -8,6 +8,12 @@ layout(location = TEXCOORD1) in float v_alpha;
 uniform sampler2D u_tex0;
 uniform sampler2D u_noiseTex;
 
+// Авто-биндинг от Axmol: u_color.a = setOpacity() нода
+// Используем для тумана — чем меньше opacity, тем агрессивнее discard
+layout(std140) uniform fs_ub {
+    vec4 u_color;
+};
+
 layout(location = SV_Target0) out vec4 FragColor;
 
 float hash(vec2 p) {
@@ -19,7 +25,7 @@ float hash(vec2 p) {
 void main() {
     vec4 color = texture(u_tex0, v_texCoord);
     float density = texture(u_noiseTex, v_texCoord * 8.0).r;
-    float a = v_alpha * density;
+    float a = v_alpha * density * u_color.a;
     // Screen-door transparency: discard based on screen-space dither
     float d = hash(gl_FragCoord.xy);
     if (d >= a) discard;
