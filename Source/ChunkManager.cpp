@@ -1,6 +1,5 @@
 #include "ChunkManager.h"
 #include "ChunkMeshBuilder.h"
-#include "FurShader.h"
 #include "PerlinNoise.hpp"
 #include "renderer/backend/ProgramManager.h"
 #include "renderer/backend/ProgramState.h"
@@ -99,16 +98,11 @@ void ChunkManager::shutdown()
             _onUnload(entry.visualNode, key);
         if (entry.waterNode && _onUnload)
             _onUnload(entry.waterNode, key);
-        if (entry.furNode && _onUnload)
-            _onUnload(entry.furNode, key);
     }
     _chunks.clear();
 
     // Освобождаем общий водный материал (retain в getOrCreateWaterMaterial)
     AX_SAFE_RELEASE_NULL(_waterMaterial);
-    // Освобождаем fur-ресурсы
-    AX_SAFE_RELEASE_NULL(_furMaterial);
-    AX_SAFE_RELEASE_NULL(_furNoiseTex);
 
     // Сбрасываем текстуру (она может быть удалена из кэша при context lost)
     _terrainAtlas = nullptr;
@@ -191,8 +185,6 @@ void ChunkManager::resume()
         // Общий водный материал держит старую (невалидную) текстуру → сбрасываем,
         // чтобы getOrCreateWaterMaterial пересоздал его с новым атласом.
         AX_SAFE_RELEASE_NULL(_waterMaterial);
-        AX_SAFE_RELEASE_NULL(_furMaterial);
-        AX_SAFE_RELEASE_NULL(_furNoiseTex);
         if (_terrainAtlas)
         {
             // Текстура обновлена, но материал чанков ссылается на старую.
@@ -475,58 +467,6 @@ ax::MeshMaterial* ChunkManager::getOrCreateWaterMaterial()
 }
 
 // =========================================================================
-//  getOrCreateFurMaterial — мультипассовый fur-материал (lazy, retained)
-// =========================================================================
-ax::Material* ChunkManager::getOrCreateFurMaterial()
-{
-    if (_furMaterial)
-        return _furMaterial;
-
-    // Создаём noise-текстуру один раз
-    if (!_furNoiseTex)
-    {
-        _furNoiseTex = FurShader::createNoiseTexture();
-        if (_furNoiseTex)
-            _furNoiseTex->retain();
-    }
-
-    _furMaterial = FurShader::createFurMaterial(_terrainAtlas, _furNoiseTex);
-    if (_furMaterial)
-        _furMaterial->retain();
-
-    return _furMaterial;
-}
-
-// =========================================================================
-//  buildFurVisualNode — создание нода с shell-мехом травы
-// =========================================================================
-ax::Node* ChunkManager::buildFurVisualNode(const ChunkKey& key, ChunkData& data)
-{
-    std::vector<float> positions;
-    std::vector<float> normals;
-    std::vector<float> uvs;
-    ax::IndexArray indices;
-
-    buildFurMesh(data, positions, normals, uvs, indices);
-    if (positions.empty() || indices.empty())
-        return nullptr;
-
-    ax::Mesh* mesh = createFurMesh(positions, normals, uvs, indices);
-    if (!mesh)
-        return nullptr;
-
-    auto* node = ax::MeshRenderer::create();
-    node->addMesh(mesh);
-
-    auto* mat = getOrCreateFurMaterial();
-    if (mat)
-        node->setMaterial(mat);
-
-    node->setPosition3D(chunkToWorld(key));
-    return node;
-}
-
-// =========================================================================
 //  buildWaterVisualNode
 // =========================================================================
 ax::Node* ChunkManager::buildWaterVisualNode(const ChunkKey& key, ChunkData& data)
@@ -704,7 +644,6 @@ void ChunkManager::processReadyChunks(bool force)
         ax::Node* chunkNode   = buildChunkVisualNode(key, *it->second.chunkData);
         it->second.visualNode = chunkNode;
         it->second.waterNode  = buildWaterVisualNode(key, *it->second.chunkData);
-        it->second.furNode    = buildFurVisualNode(key, *it->second.chunkData);
         it->second.status     = ChunkStatus::Active;
         it->second.dirty      = false;
         _genPendingSet.erase(key);
@@ -712,8 +651,6 @@ void ChunkManager::processReadyChunks(bool force)
             _onVisualize(chunkNode, key);
         if (it->second.waterNode && _onVisualize)
             _onVisualize(it->second.waterNode, key);
-        if (it->second.furNode && _onVisualize)
-            _onVisualize(it->second.furNode, key);
 
         // Помечаем соседей dirty для перестройки стыковых граней
         ChunkKey neighborKeys[] = {
@@ -782,16 +719,11 @@ void ChunkManager::processDirtyChunks()
         if (entry.waterNode && _onUnload)
             _onUnload(entry.waterNode, key);
         entry.waterNode = buildWaterVisualNode(key, *entry.chunkData);
-        if (entry.furNode && _onUnload)
-            _onUnload(entry.furNode, key);
-        entry.furNode = buildFurVisualNode(key, *entry.chunkData);
         entry.dirty     = false;
         if (_onVisualize)
             _onVisualize(entry.visualNode, key);
         if (entry.waterNode && _onVisualize)
             _onVisualize(entry.waterNode, key);
-        if (entry.furNode && _onVisualize)
-            _onVisualize(entry.furNode, key);
     }
 }
 
@@ -816,8 +748,6 @@ void ChunkManager::processUnloadQueue()
                 _onUnload(mapIt->second.visualNode, key);
             if (mapIt->second.waterNode && _onUnload)
                 _onUnload(mapIt->second.waterNode, key);
-            if (mapIt->second.furNode && _onUnload)
-                _onUnload(mapIt->second.furNode, key);
             _chunks.erase(mapIt);
             _genPendingSet.erase(key);
             it = _unloadQueue.erase(it);
@@ -864,8 +794,6 @@ void ChunkManager::updateChunkFog()
 
         if (entry.visualNode)
             entry.visualNode->setOpacity(opacity);
-        if (entry.furNode)
-            entry.furNode->setOpacity(opacity);
         // Вода не трогаем — у неё кастомный шейдер с per-pixel туманом
     }
 }

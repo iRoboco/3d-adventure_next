@@ -96,7 +96,7 @@ bool GameScene::init()
 
     // Пользовательские настройки (заданы в меню «Настройки»), с безопасными дефолтами.
     auto* ud                  = UserDefault::getInstance();
-    const int userRenderDist  = std::clamp(ud->getIntegerForKey(kKeyRenderDistance, 10), 4, 16);
+    const int userRenderDist  = std::clamp(ud->getIntegerForKey(kKeyRenderDistance, 10), 4, 32);
     const float userMouseSens = std::clamp(ud->getFloatForKey(kKeyMouseSens, 0.1f), 0.02f, 0.40f);
 
     // Конфигурация чанков

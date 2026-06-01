@@ -529,7 +529,6 @@ private:
         ChunkStatus status   = ChunkStatus::None;  ///< Текущий статус в жизненном цикле
         ax::Node* visualNode = nullptr;            ///< Указатель на отрисовываемый нод (если активен)
         ax::Node* waterNode  = nullptr;            ///< Визуальный нод поверхности воды (прозрачный меш)
-        ax::Node* furNode    = nullptr;            ///< Shell-мех травы (мультипасс)
 
         /// @brief Хранение данных чанка до выгрузки для:
         /// - Потокобезопасного запроса блоков (VoxelCollisionResolver)
@@ -828,16 +827,6 @@ private:
     ax::Node* buildWaterVisualNode(const ChunkKey& key, ChunkData& data);
 
     /**
-     * @brief Создаёт визуальный нод для shell-меха травы.
-     * @details Генерирует квады на верхних гранях BLOCK_GRASS и применяет
-     *          мультипассовый fur-материал со смещением по нормали.
-     * @param key Ключ чанка
-     * @param data Воксельные данные чанка
-     * @return ax::Node* или nullptr если трава отсутствует
-     */
-    ax::Node* buildFurVisualNode(const ChunkKey& key, ChunkData& data);
-
-    /**
      * @brief Возвращает общий render-state-материал для всех водных нодов.
      *
      * Лениво создаёт и retain'ит единый MeshMaterial (blend/depth/cull + атлас
@@ -848,12 +837,6 @@ private:
      * @return MeshMaterial* (retained, владеет ChunkManager) или nullptr при ошибке.
      */
     ax::MeshMaterial* getOrCreateWaterMaterial();
-
-    /**
-     * @brief Возвращает мультипассовый fur-материал (lazy, retained).
-     * @return Material* или nullptr при ошибке.
-     */
-    ax::Material* getOrCreateFurMaterial();
 
     /// @} // конец группы "Построение визуализации"
 
@@ -925,8 +908,6 @@ private:
     ax::Texture2D* _terrainAtlas = nullptr;  ///< Кэшированная текстура-атлас тайлов (загружается один раз)
 
     ax::MeshMaterial* _waterMaterial = nullptr;  ///< Общий render-state-материал воды (lazy, retained)
-    ax::Material* _furMaterial = nullptr;        ///< Мультипассовый fur-материал (lazy, retained)
-    ax::Texture2D* _furNoiseTex = nullptr;       ///< Noise-текстура для fur-шейдера (lazy, retained)
 
     /// @} // конец группы "Коллбеки и кэш"
 

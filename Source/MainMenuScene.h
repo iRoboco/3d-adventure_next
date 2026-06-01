@@ -34,7 +34,6 @@ private:
     // === Настройка подсистем ===
     void setupPreviewWorld();                       ///< Камера, небо, ChunkManager для фона
     void setupChunkManager();                       ///< Конфиг и коллбеки менеджера чанков
-    void generateMenuTerrain(ChunkData& chunk);     ///< Упрощённый генератор холмов для превью
 
     // === ImGui render loops ===
     void onDrawMenu();      ///< Основное меню (Новая игра / Продолжить / Настройки / Выход)

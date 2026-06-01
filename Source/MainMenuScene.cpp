@@ -2,6 +2,7 @@
 #include "SceneManager.h"
 #include "SaveGameService.h"
 #include "UiTheme.h"
+#include "PerlinNoise.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -112,17 +113,71 @@ void MainMenuScene::setupPreviewWorld()
 
 void MainMenuScene::setupChunkManager()
 {
-    // Конфигурация под лёгкое превью, а не под геймплей.
+    // Конфигурация: увеличенный preview для впечатляющего фона меню.
     ChunkManager::Config cfg;
-    cfg.renderDistance         = 5;
+    cfg.renderDistance         = 10;  // x2 от предыдущего 5 → диаметр 21 чанк
     cfg.workerThreadCount      = 2;
     cfg.maxGenerationsPerFrame = 4;
     cfg.unloadMargin           = 1;
     cfg.textureFilter          = TextureFilterMode::NEAREST;
     _chunkMgr.init(cfg);
 
-    // Генерация в фоновом потоке: простые аналитические холмы без воды.
-    _chunkMgr.setOnGenerate([this](ChunkData& chunk) { generateMenuTerrain(chunk); });
+    // Генерация в фоновом потоке: полный перлиновый террейн (как в GameScene).
+    _chunkMgr.setOnGenerate([](ChunkData& chunk) {
+        constexpr int SEA_LEVEL = 38;
+
+        const ChunkKey& key = chunk.getKey();
+        auto basePos        = ChunkManager::chunkToWorld(key);
+
+        thread_local siv::PerlinNoise perlin(42);
+        thread_local siv::PerlinNoise rockNoise(137);
+        thread_local siv::PerlinNoise dirtNoise(271);
+
+        for (int x = 0; x < CHUNK_SIZE_X; ++x)
+            for (int z = 0; z < CHUNK_SIZE_Z; ++z)
+            {
+                float wx      = basePos.x + x;
+                float wz      = basePos.z + z;
+                float terrain = perlin.octave2D_01(wx * 0.02, wz * 0.02, 6) * 40.0f;
+                float biome   = perlin.octave2D_01(wx * 0.005, wz * 0.005, 4) * 15.0f - 5.0f;
+                int surfaceY  = std::clamp(static_cast<int>(terrain + biome + 30), 1, CHUNK_SIZE_Y - 2);
+
+                float rockVal = rockNoise.octave2D_01(wx * 0.08, wz * 0.08, 3);
+                float dirtVal = dirtNoise.octave2D_01(wx * 0.06, wz * 0.06, 2);
+
+                for (int y = 0; y <= surfaceY; ++y)
+                {
+                    BlockId block;
+                    if (y == surfaceY)
+                    {
+                        if (rockVal > 0.72f)
+                            block = BLOCK_STONE;
+                        else if (surfaceY < SEA_LEVEL)
+                            block = BLOCK_DIRT;
+                        else if (dirtVal > 0.65f)
+                            block = BLOCK_DIRT;
+                        else
+                            block = BLOCK_GRASS;
+                    }
+                    else if (y > surfaceY - 4)
+                    {
+                        block = BLOCK_DIRT;
+                    }
+                    else
+                    {
+                        block = BLOCK_STONE;
+                    }
+
+                    chunk.setBlock(x, y, z, block);
+                }
+
+                if (surfaceY < SEA_LEVEL)
+                {
+                    for (int y = surfaceY + 1; y <= SEA_LEVEL; ++y)
+                        chunk.setBlock(x, y, z, BLOCK_WATER);
+                }
+            }
+    });
 
     // Визуализация в главном потоке: маска USER1, добавление в граф сцены.
     _chunkMgr.setOnVisualize([this](Node* node, const ChunkKey&) {
@@ -140,36 +195,6 @@ void MainMenuScene::setupChunkManager()
 
     // Чанки начинают грузиться немедленно вокруг центра превью.
     _chunkMgr.forceUpdate();
-}
-
-void MainMenuScene::generateMenuTerrain(ChunkData& chunk)
-{
-    const ChunkKey& key = chunk.getKey();
-    const int baseX     = key.x * CHUNK_SIZE_X;
-    const int baseZ     = key.z * CHUNK_SIZE_Z;
-
-    for (int lz = 0; lz < CHUNK_SIZE_Z; ++lz)
-        for (int lx = 0; lx < CHUNK_SIZE_X; ++lx)
-        {
-            const int wx = baseX + lx;
-            const int wz = baseZ + lz;
-
-            // Комбинация синусов разных частот → мягкий разнообразный рельеф.
-            float heightF = 26.0f + std::sin(wx * 0.15f) * 5.0f + std::cos(wz * 0.15f) * 4.0f +
-                            std::sin((wx + wz) * 0.1f) * 2.0f;
-
-            const int surfaceY = std::max(14, static_cast<int>(std::floor(heightF)));
-
-            for (int ly = 0; ly <= surfaceY; ++ly)
-            {
-                if (ly < surfaceY - 4)
-                    chunk.setBlock(lx, ly, lz, BLOCK_STONE);
-                else if (ly < surfaceY)
-                    chunk.setBlock(lx, ly, lz, BLOCK_DIRT);
-                else
-                    chunk.setBlock(lx, ly, lz, BLOCK_GRASS);
-            }
-        }
 }
 
 // =========================================================================
@@ -218,7 +243,7 @@ void MainMenuScene::onDrawMenu()
     // Заголовок крупным кеглем (динамический размер шрифта ImGui 1.92).
     ImGui::PushFont(nullptr, 46.0f);
     ImGui::PushStyleColor(ImGuiCol_Text, ui_theme::kAccentHover);
-    ui_theme::textCentered("VOXEL ADVENTURE");
+    ui_theme::textCentered("CATHODE SHIFT");
     ImGui::PopStyleColor();
     ImGui::PopFont();
 
@@ -269,8 +294,8 @@ void MainMenuScene::onDrawSettings()
 
     // Дальность прорисовки (в чанках) — читается GameScene при старте новой игры.
     int renderDistance = ud->getIntegerForKey(kKeyRenderDistance, 10);
-    if (ImGui::SliderInt("Дальность прорисовки", &renderDistance, 4, 16))
-        ud->setIntegerForKey(kKeyRenderDistance, std::clamp(renderDistance, 4, 16));
+    if (ImGui::SliderInt("Дальность прорисовки", &renderDistance, 4, 32))
+        ud->setIntegerForKey(kKeyRenderDistance, std::clamp(renderDistance, 4, 32));
 
     // Чувствительность мыши (градусы/пиксель).
     float mouseSens = ud->getFloatForKey(kKeyMouseSens, 0.1f);

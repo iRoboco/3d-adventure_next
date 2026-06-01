@@ -36,7 +36,7 @@ bool SplashScene::init()
     }
     else
     {
-        auto title = Label::createWithTTF("VOXEL ADVENTURE", "fonts/arial.ttf", 56);
+        auto title = Label::createWithTTF("CATHODE SHIFT", "fonts/arial.ttf", 56);
         brand      = title;
     }
 
