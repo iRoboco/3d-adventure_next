@@ -854,6 +854,20 @@ void ChunkManager::applyTextureFilter()
         }
         AXLOGI("ChunkManager: texture filter = NEAREST_MIPMAP_NEAREST");
         break;
+
+    case TextureFilterMode::NEAREST_MIPMAP_LINEAR:
+        // NEAREST внутри мип-уровня (тексели резкие, как пиксель-арт), но ЛИНЕЙНО
+        // между двумя ближайшими уровнями — убирает «скачки» мипов при движении
+        // камеры (главный источник дрожания дальних кубов), без анизотропии.
+        texParams.magFilter = ax::backend::SamplerFilter::NEAREST;
+        texParams.minFilter = ax::backend::SamplerFilter::NEAREST_MIPMAP_LINEAR;
+        if (!_terrainAtlas->hasMipmaps())
+        {
+            _terrainAtlas->generateMipmap();
+            AXLOGI("ChunkManager: mipmaps generated");
+        }
+        AXLOGI("ChunkManager: texture filter = NEAREST_MIPMAP_LINEAR");
+        break;
     }
 
     // Применяем параметры к текстуре-атласу
