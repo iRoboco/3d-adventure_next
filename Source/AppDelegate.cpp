@@ -45,7 +45,9 @@ AppDelegate::~AppDelegate() {}
 void AppDelegate::initGfxContextAttrs()
 {
     // set graphics context attributes: red,green,blue,alpha,depth,stencil,multisamplesCount
-    GfxContextAttrs gfxContextAttrs = {8, 8, 8, 8, 24, 8, 0};
+    // 4x MSAA сглаживает силуэты кубов (геометрический алиасинг — «жёсткие» края
+    // граней, особенно вдали). Текстуры не трогает (их сглаживает terrain-шейдер).
+    GfxContextAttrs gfxContextAttrs = {8, 8, 8, 8, 24, 8, 4};
     // since axmol-2.2 vsync was enabled in engine by default
     // gfxContextAttrs.vsync = false;
 
