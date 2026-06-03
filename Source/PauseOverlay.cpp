@@ -11,6 +11,9 @@ namespace
 {
 /// @brief FOURCC-идентификатор render loop меню паузы.
 constexpr std::string_view kPauseLoopId = "#paus";
+
+/// @brief Ключ настройки pixel-art AA (общий с GameScene/MainMenuScene).
+constexpr const char* kKeyPixelArtAA = "settings.pixelArtAA";
 }  // namespace
 
 PauseOverlay* PauseOverlay::create(GameScene* owner)
@@ -73,6 +76,14 @@ void PauseOverlay::onDrawPauseMenu()
     ui_theme::textCentered("Пауза");
     ImGui::PopFont();
     ImGui::Dummy(ImVec2(0.0f, 20.0f));
+
+    // --- Графика: переключатель pixel-art AA (применяется вживую) ---
+    {
+        bool aa = UserDefault::getInstance()->getBoolForKey(kKeyPixelArtAA, true);
+        if (ImGui::Checkbox("Сглаживание пикселей (AA)", &aa) && _owner)
+            _owner->setPixelArtAA(aa);  // живое применение + сохранение
+    }
+    ImGui::Dummy(ImVec2(0.0f, 12.0f));
 
     ImGui::PushFont(nullptr, 22.0f);
     if (ui_theme::menuButton("Продолжить") && _owner)

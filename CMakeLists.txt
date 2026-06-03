@@ -85,6 +85,8 @@ ax_target_compile_shaders(${APP_NAME}
     FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/Source/shaders/water.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/Source/shaders/water.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source/shaders/terrain.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source/shaders/terrain.frag
 )
 
 # Add any libraries you need to link to the project after this point

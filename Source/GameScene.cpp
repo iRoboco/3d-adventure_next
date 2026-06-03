@@ -15,6 +15,7 @@ namespace
 /// @{
 constexpr const char* kKeyRenderDistance = "settings.renderDistance";
 constexpr const char* kKeyMouseSens      = "settings.mouseSensitivity";
+constexpr const char* kKeyPixelArtAA     = "settings.pixelArtAA";
 /// @}
 }  // namespace
 
@@ -111,6 +112,10 @@ bool GameScene::init()
     // и отложенной перестройки до «оседания» соседей каждый ребилд стал заметно
     // дешевле и реже, поэтому осевшую пачку чанков можно разгребать быстрее.
     cfg.maxDirtyRebuildsPerFrame = 4;
+    // Кастомный шейдер террейна: antialiased pixel art (резко вблизи, без дрожания
+    // вдали). Атлас при этом грузится с LINEAR_MIPMAP_LINEAR. Управляется из меню
+    // паузы и сохраняется в UserDefault (по умолчанию включён).
+    cfg.pixelArtAA               = ud->getBoolForKey(kKeyPixelArtAA, true);
     _chunkMgr.init(cfg);
 
     // Генерация мира
@@ -467,6 +472,17 @@ void GameScene::resumeGame()
         _playerController->setEnabled(true);
         _playerController->setMouseCaptured(!_playerController->isFreeFlightMode());
     }
+}
+
+// =========================================================================
+//  setPixelArtAA — переключение pixel-art AA из меню паузы (вживую + сохранение)
+// =========================================================================
+void GameScene::setPixelArtAA(bool enabled)
+{
+    _chunkMgr.setPixelArtAA(enabled);
+    auto* ud = ax::UserDefault::getInstance();
+    ud->setBoolForKey(kKeyPixelArtAA, enabled);
+    ud->flush();
 }
 
 // =========================================================================

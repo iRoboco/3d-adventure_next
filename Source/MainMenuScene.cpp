@@ -19,6 +19,7 @@ constexpr std::string_view kMenuLoopId = "#menu";
 /// @{
 constexpr const char* kKeyRenderDistance = "settings.renderDistance";
 constexpr const char* kKeyMouseSens      = "settings.mouseSensitivity";
+constexpr const char* kKeyPixelArtAA     = "settings.pixelArtAA";
 /// @}
 }  // namespace
 
@@ -122,6 +123,10 @@ void MainMenuScene::setupChunkManager()
     cfg.maxGenerationsPerFrame = 4;
     cfg.unloadMargin           = 1;
     cfg.textureFilter          = TextureFilterMode::NEAREST_MIPMAP_LINEAR;
+    // Antialiased-pixel-art шейдер: атлас грузится с LINEAR_MIPMAP_LINEAR,
+    // textureFilter выше остаётся фолбэком, если выключить pixelArtAA.
+    // Значение берём из настроек (общее с игрой), по умолчанию включено.
+    cfg.pixelArtAA             = UserDefault::getInstance()->getBoolForKey(kKeyPixelArtAA, true);
     _chunkMgr.init(cfg);
 
     // Генерация в фоновом потоке: полный перлиновый террейн (как в GameScene).
@@ -351,6 +356,14 @@ void MainMenuScene::onDrawSettings()
     float mouseSens = ud->getFloatForKey(kKeyMouseSens, 0.1f);
     if (ImGui::SliderFloat("Чувствительность мыши", &mouseSens, 0.02f, 0.40f, "%.3f"))
         ud->setFloatForKey(kKeyMouseSens, std::clamp(mouseSens, 0.02f, 0.40f));
+
+    // Сглаживание пикселей (pixel-art AA) — применяется к превью сразу.
+    bool pixelAA = ud->getBoolForKey(kKeyPixelArtAA, true);
+    if (ImGui::Checkbox("Сглаживание пикселей (AA)", &pixelAA))
+    {
+        ud->setBoolForKey(kKeyPixelArtAA, pixelAA);
+        _chunkMgr.setPixelArtAA(pixelAA);  // живое применение к фону меню
+    }
 
     ImGui::Dummy(ImVec2(0.0f, 18.0f));
 

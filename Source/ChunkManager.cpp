@@ -430,6 +430,25 @@ ax::Node* ChunkManager::buildChunkVisualNode(const ChunkKey& key, ChunkData& dat
         sb.setBlendFunc(ax::BlendFunc{ax::backend::BlendFactor::SRC_ALPHA, ax::backend::BlendFactor::ONE_MINUS_SRC_ALPHA});
     }
     chunkNode->setMaterial(material);
+
+    // Кастомный шейдер террейна с antialiased-pixel-art выборкой (поверх базового
+    // UNLIT-материала, который несёт render-state и привязку атласа). Программа
+    // кэшируется ProgramManager, поэтому вызов на каждый чанк дёшев. Если шейдер
+    // не собран (program == nullptr) — остаётся обычный UNLIT.
+    if (_cfg.pixelArtAA)
+    {
+        auto* program = ax::ProgramManager::getInstance()->loadProgram("custom/terrain_vs", "custom/terrain_fs",
+                                                                       ax::backend::VertexLayoutType::Unspec);
+        if (program)
+        {
+            auto* ps = new ax::backend::ProgramState(program);
+            if (_terrainAtlas)
+                ps->setTexture(ps->getUniformLocation("u_tex0"), 0, _terrainAtlas->getBackendTexture());
+            chunkNode->setProgramState(ps);  // заменяет программу, сохраняя state-block
+            ps->release();                   // нод удерживает свою ссылку
+        }
+    }
+
     chunkNode->setPosition3D(chunkToWorld(key));
     return chunkNode;
 }
@@ -825,6 +844,29 @@ bool ChunkManager::isChunkActive(const ChunkKey& key) const
 }
 
 // =========================================================================
+//  setPixelArtAA — переключение кастомного шейдера террейна на лету
+// =========================================================================
+void ChunkManager::setPixelArtAA(bool enabled)
+{
+    if (_cfg.pixelArtAA == enabled)
+        return;
+    _cfg.pixelArtAA = enabled;
+
+    // 1) Сэмплер атласа: LINEAR_MIPMAP_LINEAR для AA-шейдера, иначе режим из конфига.
+    //    Действует немедленно для всех нодов (текстура общая).
+    applyTextureFilter();
+
+    // 2) Помечаем активные чанки dirty — ноды пересоберутся в processDirtyChunks()
+    //    уже с актуальным _cfg.pixelArtAA (с программой или на чистом UNLIT).
+    for (auto& [key, entry] : _chunks)
+    {
+        if (entry.status == ChunkStatus::Active && entry.visualNode)
+            entry.dirty = true;
+    }
+    AXLOGI("ChunkManager: pixelArtAA = %d (chunks marked for rebuild)", enabled ? 1 : 0);
+}
+
+// =========================================================================
 //  Фильтрация текстур
 // =========================================================================
 void ChunkManager::applyTextureFilter()
@@ -834,6 +876,22 @@ void ChunkManager::applyTextureFilter()
 
     // Настройка параметров текстуры для пиксельной фильтрации
     ax::Texture2D::TexParams texParams;
+
+    // Режим pixel-art AA: атлас должен быть ЛИНЕЙНЫМ (+ мипы), «резкость»
+    // текселей восстанавливает фрагментный шейдер custom/terrain_fs по fwidth.
+    if (_cfg.pixelArtAA)
+    {
+        texParams.magFilter = ax::backend::SamplerFilter::LINEAR;
+        texParams.minFilter = ax::backend::SamplerFilter::LINEAR_MIPMAP_LINEAR;
+        if (!_terrainAtlas->hasMipmaps())
+        {
+            _terrainAtlas->generateMipmap();
+            AXLOGI("ChunkManager: mipmaps generated");
+        }
+        _terrainAtlas->setTexParameters(texParams);
+        AXLOGI("ChunkManager: texture filter = LINEAR_MIPMAP_LINEAR (pixel-art AA shader)");
+        return;
+    }
 
     switch (_cfg.textureFilter)
     {

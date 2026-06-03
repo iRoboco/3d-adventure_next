@@ -282,6 +282,13 @@ public:
 
         /// @brief Режим фильтрации текстур атласа
         TextureFilterMode textureFilter = TextureFilterMode::NEAREST_MIPMAP_NEAREST;
+
+        /// @brief Кастомный шейдер террейна с «antialiased pixel art» выборкой.
+        /// При true чанки рендерятся шейдером custom/terrain_*, а атлас
+        /// привязывается с LINEAR_MIPMAP_LINEAR (этого требует fwidth-сглаживание).
+        /// Тексели остаются резкими вблизи, но не дрожат вдали — без анизотропии.
+        /// При false — обычный встроенный UNLIT + режим из textureFilter.
+        bool pixelArtAA = false;
     };
 
     /// @} // конец группы "Конфигурация"
@@ -409,6 +416,23 @@ public:
      * @note Безопасно вызывать только после init() и до первого update()
      */
     void forceUpdate() { _lastPlayerChunk = ChunkKey{INT32_MIN, INT32_MIN, INT32_MIN}; }
+
+    /**
+     * @brief Текущее состояние режима «antialiased pixel art».
+     */
+    bool isPixelArtAA() const { return _cfg.pixelArtAA; }
+
+    /**
+     * @brief Включает/выключает кастомный шейдер террейна (pixel-art AA) на лету.
+     *
+     * Меняет фильтрацию атласа (LINEAR_MIPMAP_LINEAR ⇄ режим из textureFilter) сразу
+     * для всех нодов и помечает активные чанки dirty — processDirtyChunks() пересоберёт
+     * их визуальные ноды через buildChunkVisualNode(), добавив/убрав кастомную программу.
+     * Перестройка размазана по кадрам (maxDirtyRebuildsPerFrame), без фриза.
+     *
+     * @note Только главный поток (трогает _chunks и GL-состояние текстуры).
+     */
+    void setPixelArtAA(bool enabled);
 
     /// @} // конец группы "Конструкторы и управление жизненным циклом"
 

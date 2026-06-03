@@ -42,6 +42,9 @@ public:
     void resumeGame();                      ///< Скрыть меню паузы, вернуть управление
     bool isPaused() const { return _paused; }
 
+    /// @brief Переключает pixel-art AA шейдер вживую и сохраняет настройку (вызывается из паузы).
+    void setPixelArtAA(bool enabled);
+
 protected:
     // Axmol вызывает эти методы при сворачивании/разворачивании окна
     void onEnter() override;
