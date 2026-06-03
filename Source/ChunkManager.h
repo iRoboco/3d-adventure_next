@@ -125,8 +125,9 @@ static constexpr int CHUNK_SIZE_Z = 16;   ///< Глубина чанка по о
  */
 enum class TextureFilterMode
 {
-    NEAREST,                ///< Ближайший сосед, без mipmaps (чёткие пиксели)
-    NEAREST_MIPMAP_NEAREST  ///< Ближайший сосед + mipmaps (убирает мерцание)
+    NEAREST,                 ///< Ближайший сосед, без mipmaps (чёткие пиксели, но дрожат вдали)
+    NEAREST_MIPMAP_NEAREST,  ///< NEAREST + mipmaps, ближайший мип-уровень (резко, но возможны «скачки» между уровнями)
+    NEAREST_MIPMAP_LINEAR    ///< NEAREST внутри уровня + линейно МЕЖДУ мип-уровнями (резкие тексели, плавная дистанция — против дрожания)
 };
 
 /// @} // конец группы "Режимы фильтрации текстур"

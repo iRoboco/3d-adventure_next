@@ -121,7 +121,7 @@ void MainMenuScene::setupChunkManager()
     cfg.workerThreadCount      = 2;
     cfg.maxGenerationsPerFrame = 4;
     cfg.unloadMargin           = 1;
-    cfg.textureFilter          = TextureFilterMode::NEAREST;
+    cfg.textureFilter          = TextureFilterMode::NEAREST_MIPMAP_LINEAR;
     _chunkMgr.init(cfg);
 
     // Генерация в фоновом потоке: полный перлиновый террейн (как в GameScene).
