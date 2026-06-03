@@ -1,10 +1,19 @@
 #include "ChunkManager.h"
 #include "ChunkMeshBuilder.h"
+#include "TerrainAtlasBuilder.h"
 #include "PerlinNoise.hpp"
 #include "renderer/backend/ProgramManager.h"
 #include "renderer/backend/ProgramState.h"
 #include <algorithm>
 #include <climits>
+
+// Анизотропная фильтрация в axmol через SamplerDescriptor не пробрасывается,
+// поэтому ставим GL_TEXTURE_MAX_ANISOTROPY напрямую на хендл атласа. Привязку
+// делаем через __gl, чтобы не рассинхронизировать кэш состояния рендерера.
+#if defined(AX_USE_GL)
+#    include "platform/GL.h"
+#    include "renderer/backend/opengl/OpenGLState.h"
+#endif
 
 // =========================================================================
 //  Конструктор / деструктор
@@ -29,7 +38,7 @@ void ChunkManager::init(const Config& cfg)
 
     _genQueue.maxSize = static_cast<size_t>(_cfg.maxQueueSize);
 
-    _terrainAtlas = ax::Director::getInstance()->getTextureCache()->addImage("textures/terrain_atlas.png");
+    _terrainAtlas = loadTerrainAtlas();
 
     if (!_terrainAtlas)
     {
@@ -106,8 +115,23 @@ void ChunkManager::shutdown()
     // Освобождаем общий водный материал (retain в getOrCreateWaterMaterial)
     AX_SAFE_RELEASE_NULL(_waterMaterial);
 
-    // Сбрасываем текстуру (она может быть удалена из кэша при context lost)
+    // Сбрасываем текстуры (могут быть удалены из кэша при context lost).
+    // Дальний атлас держится в кэше под своим ключом — снимаем его принудительно,
+    // иначе при следующем init() addImage вернёт stale-объект.
     _terrainAtlas = nullptr;
+    auto* tc = ax::Director::getInstance()->getTextureCache();
+    if (_terrainAtlasFar)
+    {
+        tc->removeTextureForKey("terrain_atlas_far");
+        _terrainAtlasFar = nullptr;
+    }
+    // Процедурный атлас (если был): снимаем текстуру из кэша и освобождаем Image,
+    // чтобы следующий init() пересобрал его заново.
+    if (_atlasImage)
+    {
+        tc->removeTextureForKey("terrain_atlas");
+        AX_SAFE_RELEASE_NULL(_atlasImage);
+    }
 
     // Сброс флагов после полного уничтожения
     _paused = false;
@@ -182,7 +206,7 @@ void ChunkManager::resume()
     // текстура станет невалидной. Пересоздаём из кэша.
     if (!_terrainAtlas || _terrainAtlas->getPixelsWide() <= 0)
     {
-        _terrainAtlas = ax::Director::getInstance()->getTextureCache()->addImage("textures/terrain_atlas.png");
+        _terrainAtlas = loadTerrainAtlas();
         applyTextureFilter();
         // Общий водный материал держит старую (невалидную) текстуру → сбрасываем,
         // чтобы getOrCreateWaterMaterial пересоздал его с новым атласом.
@@ -257,6 +281,9 @@ void ChunkManager::update(const ax::Vec3& playerWorldPos)
     processReadyChunks();
     processDirtyChunks();
     processUnloadQueue();
+
+    // Переключаем дальние чанки на сглаженный (mip+anisotropy) атлас
+    updateChunkTextureLOD();
 
     // Обновляем туман на всех чанках
     updateChunkFog();
@@ -645,6 +672,7 @@ void ChunkManager::processReadyChunks(bool force)
         }
         ax::Node* chunkNode   = buildChunkVisualNode(key, *it->second.chunkData);
         it->second.visualNode = chunkNode;
+        it->second.usingFarAtlas = false;  // новая нода привязана к ближнему атласу; LOD-пасс поправит при необходимости
         it->second.waterNode  = buildWaterVisualNode(key, *it->second.chunkData);
         it->second.status     = ChunkStatus::Active;
         it->second.dirty      = false;
@@ -720,6 +748,7 @@ void ChunkManager::processDirtyChunks()
             entry.visualNode = nullptr;
         }
         entry.visualNode = buildChunkVisualNode(key, *entry.chunkData);
+        entry.usingFarAtlas = false;  // пересобранная нода на ближнем атласе; LOD-пасс вернёт дальний при необходимости
         if (entry.waterNode && _onWaterNodeDestroyed)
             _onWaterNodeDestroyed(entry.waterNode);
         if (entry.waterNode && _onUnload)
@@ -825,6 +854,29 @@ bool ChunkManager::isChunkActive(const ChunkKey& key) const
 }
 
 // =========================================================================
+//  Загрузка ближнего атласа (с учётом proceduralStoneAtlas)
+// =========================================================================
+ax::Texture2D* ChunkManager::loadTerrainAtlas()
+{
+    auto* tc = ax::Director::getInstance()->getTextureCache();
+
+    if (_cfg.proceduralStoneAtlas)
+    {
+        // Собираем атлас в память один раз; переиспользуем при context loss.
+        if (!_atlasImage)
+            _atlasImage = TerrainAtlasBuilder::build(_cfg.stoneSeed);  // retained до shutdown
+        if (_atlasImage)
+        {
+            tc->removeTextureForKey("terrain_atlas");  // сбрасываем возможный stale-объект
+            return tc->addImage(_atlasImage, "terrain_atlas");
+        }
+        AXLOGW("ChunkManager: procedural atlas build failed, falling back to file");
+    }
+
+    return tc->addImage("textures/terrain_atlas.png");
+}
+
+// =========================================================================
 //  Фильтрация текстур
 // =========================================================================
 void ChunkManager::applyTextureFilter()
@@ -832,32 +884,116 @@ void ChunkManager::applyTextureFilter()
     if (!_terrainAtlas)
         return;
 
-    // Настройка параметров текстуры для пиксельной фильтрации
-    ax::Texture2D::TexParams texParams;
+    // (Пере)создаём ДАЛЬНИЙ атлас как отдельный GL-объект из того же изображения.
+    // Отдельный объект нужен, чтобы повесить собственный сэмплер (mip + anisotropy),
+    // не трогая ближний «чёткий». Делается и при старте, и после context loss
+    // (старый объект становится невалидным — getPixelsWide() <= 0).
+    const bool wantFar = (_cfg.farTextureDistance > 0 && _cfg.maxAnisotropy > 1.0f);
+    if (wantFar)
+    {
+        const bool needCreate = !_terrainAtlasFar || _terrainAtlasFar->getPixelsWide() <= 0;
+        if (needCreate)
+        {
+            auto* tc = ax::Director::getInstance()->getTextureCache();
+            tc->removeTextureForKey("terrain_atlas_far");  // сбрасываем возможный stale-объект
+            if (_atlasImage)
+            {
+                // Тот же процедурный Image, что и у ближнего атласа.
+                _terrainAtlasFar = tc->addImage(_atlasImage, "terrain_atlas_far");
+            }
+            else
+            {
+                auto* img        = new ax::Image();
+                _terrainAtlasFar = img->initWithImageFile("textures/terrain_atlas.png")
+                                       ? tc->addImage(img, "terrain_atlas_far")
+                                       : nullptr;
+                img->release();
+            }
+        }
+    }
 
-    switch (_cfg.textureFilter)
+    // Ближний атлас: режим из конфига, без анизотропии (вид вблизи не меняем).
+    applyAtlasSampler(_terrainAtlas, _cfg.textureFilter, 1.0f);
+
+    // Дальний атлас: принудительно mip + анизотропия — резкость под скользящим
+    // углом на дистанции, куда красятся чанки от farTextureDistance и дальше.
+    if (_terrainAtlasFar && _terrainAtlasFar != _terrainAtlas)
+        applyAtlasSampler(_terrainAtlasFar, TextureFilterMode::NEAREST_MIPMAP_NEAREST, _cfg.maxAnisotropy);
+}
+
+// =========================================================================
+//  applyAtlasSampler — настройка сэмплера одной копии атласа
+// =========================================================================
+void ChunkManager::applyAtlasSampler(ax::Texture2D* tex, TextureFilterMode mode, float anisotropy)
+{
+    if (!tex)
+        return;
+
+    ax::Texture2D::TexParams texParams;
+    switch (mode)
     {
     case TextureFilterMode::NEAREST:
         texParams.magFilter = ax::backend::SamplerFilter::NEAREST;
         texParams.minFilter = ax::backend::SamplerFilter::NEAREST;
-        AXLOGI("ChunkManager: texture filter = NEAREST");
         break;
 
     case TextureFilterMode::NEAREST_MIPMAP_NEAREST:
         texParams.magFilter = ax::backend::SamplerFilter::NEAREST;
         texParams.minFilter = ax::backend::SamplerFilter::NEAREST_MIPMAP_NEAREST;
-        // Автоматическая генерация mipmaps при первом использовании
-        if (!_terrainAtlas->hasMipmaps())
-        {
-            _terrainAtlas->generateMipmap();
-            AXLOGI("ChunkManager: mipmaps generated");
-        }
-        AXLOGI("ChunkManager: texture filter = NEAREST_MIPMAP_NEAREST");
         break;
     }
 
-    // Применяем параметры к текстуре-атласу
-    _terrainAtlas->setTexParameters(texParams);
+    // Анизотропия имеет смысл только при наличии mip-цепочки.
+    const bool needMipmaps = (mode == TextureFilterMode::NEAREST_MIPMAP_NEAREST) || (anisotropy > 1.0f);
+    if (needMipmaps && !tex->hasMipmaps())
+        tex->generateMipmap();
+
+    tex->setTexParameters(texParams);
+
+    // axmol не пробрасывает anisotropy через SamplerDescriptor — ставим
+    // GL_TEXTURE_MAX_ANISOTROPY напрямую на хендл (это per-object параметр,
+    // setTexParameters его не сбрасывает). Привязка через __gl — чтобы не
+    // рассинхронизировать кэш состояния рендерера.
+#if defined(AX_USE_GL)
+    if (anisotropy > 1.0f && tex->hasMipmaps() && GLAD_GL_EXT_texture_filter_anisotropic)
+    {
+        GLfloat maxSupported = 1.0f;
+        glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxSupported);
+        const GLfloat level = std::min<GLfloat>(anisotropy, maxSupported);
+
+        const GLuint glTex = static_cast<GLuint>(tex->getBackendTexture()->getHandler(0));
+        ax::backend::__gl->bindTexture(GL_TEXTURE_2D, glTex);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, level);
+        AXLOGI("ChunkManager: far atlas anisotropic filtering = %.0fx (hw max %.0fx)", level, maxSupported);
+    }
+    else if (anisotropy > 1.0f && !GLAD_GL_EXT_texture_filter_anisotropic)
+    {
+        AXLOGI("ChunkManager: anisotropic filtering requested but not supported by GL");
+    }
+#endif
+}
+
+// =========================================================================
+//  updateChunkTextureLOD — переключение чанков между ближним/дальним атласом
+// =========================================================================
+void ChunkManager::updateChunkTextureLOD()
+{
+    // Деление выключено или дальнего атласа нет → всё на ближнем.
+    if (_cfg.farTextureDistance <= 0 || !_terrainAtlasFar || _terrainAtlasFar == _terrainAtlas)
+        return;
+
+    for (auto& [key, entry] : _chunks)
+    {
+        if (entry.status != ChunkStatus::Active || !entry.visualNode)
+            continue;
+
+        const bool wantFar = chunkDistance(key, _lastPlayerChunk) >= _cfg.farTextureDistance;
+        if (wantFar == entry.usingFarAtlas)
+            continue;  // уже на нужном атласе — setTexture не дёргаем
+
+        static_cast<ax::MeshRenderer*>(entry.visualNode)->setTexture(wantFar ? _terrainAtlasFar : _terrainAtlas);
+        entry.usingFarAtlas = wantFar;
+    }
 }
 
 // =========================================================================

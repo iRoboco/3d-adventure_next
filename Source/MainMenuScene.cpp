@@ -122,6 +122,10 @@ void MainMenuScene::setupChunkManager()
     cfg.maxGenerationsPerFrame = 4;
     cfg.unloadMargin           = 1;
     cfg.textureFilter          = TextureFilterMode::NEAREST;
+    // Процедурный каменный атлас (см. GameScene): заполняет слоты stone top/side/
+    // bottom, иначе боковые грани камня в превью пусты. После бейка PNG → false.
+    cfg.proceduralStoneAtlas   = false;
+    cfg.stoneSeed              = 2024u;
     _chunkMgr.init(cfg);
 
     // Генерация в фоновом потоке: полный перлиновый террейн (как в GameScene).

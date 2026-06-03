@@ -108,7 +108,15 @@ inline uint16_t getBlockTileIndex(uint16_t blockId, int face)
         return TILE_GRASS_SIDE;  // ±X and ±Z faces
     }
     case BLOCK_STONE:
-        return 3;  // stone texture on all faces
+        // Камень — разные тайлы на грань, все в КАМЕННОМ столбце атласа (col3:
+        // idx 3/7/11), см. TerrainAtlasBuilder. Без процедурки все три = камень,
+        // поэтому фолбэк не даёт траву/землю на боках.
+        // face: 0=+X,1=-X,2=+Y(top),3=-Y(bottom),4=+Z,5=-Z
+        if (face == 2)
+            return 3;   // +Y → stone top
+        if (face == 3)
+            return 11;  // -Y → stone bottom
+        return 7;       // ±X, ±Z → stone side
     case BLOCK_DIRT:
         return 2;  // dirt texture on all faces
     default:

@@ -281,6 +281,27 @@ public:
 
         /// @brief Режим фильтрации текстур атласа
         TextureFilterMode textureFilter = TextureFilterMode::NEAREST_MIPMAP_NEAREST;
+
+        /// @brief Степень анизотропной фильтрации ДАЛЬНЕГО атласа (1.0 = выкл).
+        /// Применяется только к копии атласа, которой красятся чанки на дистанции
+        /// >= farTextureDistance (см. ниже), поэтому вид вблизи не меняется вовсе.
+        /// Реально работает лишь при наличии mip-цепочки и поддержке расширения GL;
+        /// фактическое значение ограничивается аппаратным максимумом.
+        float maxAnisotropy = 4.0f;
+
+        /// @brief Дистанция в чанках (Chebyshev), с которой чанк переключается на
+        /// дальний атлас (mip + anisotropy). Ближе — обычный «чёткий» атлас.
+        /// 0 отключает деление (все чанки на ближнем атласе).
+        int farTextureDistance = 6;
+
+        /// @brief Генерировать каменные тайлы атласа процедурно в рантайме.
+        /// false (по умолчанию) — грузится готовый textures/terrain_atlas.png
+        /// (включая запечённый камень). true — атлас собирается в памяти при
+        /// старте через TerrainAtlasBuilder (удобно для подбора stoneSeed).
+        bool proceduralStoneAtlas = false;
+
+        /// @brief Seed процедурного камня (при proceduralStoneAtlas = true).
+        uint32_t stoneSeed = 2024u;
     };
 
     /// @} // конец группы "Конфигурация"
@@ -552,6 +573,11 @@ private:
         /// @brief Флаг необходимости перестроения меша
         ///< Устанавливается при загрузке соседей: грани на стыке могут стать невидимыми
         bool dirty = false;
+
+        /// @brief Какой атлас сейчас привязан к visualNode: true — дальний
+        /// (mip+anisotropy), false — ближний (чёткий). Кэш, чтобы не дёргать
+        /// setTexture каждый кадр, а только при пересечении порога дистанции.
+        bool usingFarAtlas = false;
     };
 
     /**
@@ -661,6 +687,34 @@ private:
 
      */
     void applyTextureFilter();
+
+    /**
+     * @brief Загружает/создаёт ближний террейн-атлас по текущему конфигу.
+     * @return Текстура атласа из кэша (или nullptr при сбое).
+     *
+     * Если proceduralStoneAtlas — собирает атлас в память (TerrainAtlasBuilder),
+     * кэширует _atlasImage и регистрирует текстуру из него. Иначе грузит
+     * textures/terrain_atlas.png. Используется в init() и при context loss.
+     */
+    ax::Texture2D* loadTerrainAtlas();
+
+    /**
+     * @brief Конфигурирует сэмплер одной копии атласа.
+     * @param tex         Текстура-атлас (ближняя или дальняя).
+     * @param mode        Режим min/mag фильтрации.
+     * @param anisotropy  Степень анизотропии (1.0 = выкл). Применяется только
+     *                    при наличии mip-цепочки и поддержке GL-расширения.
+     * @note Только главный поток (GL-вызовы).
+     */
+    void applyAtlasSampler(ax::Texture2D* tex, TextureFilterMode mode, float anisotropy);
+
+    /**
+     * @brief Переключает чанки между ближним и дальним атласом по дистанции.
+     * Вызывается каждый кадр; реально дёргает setTexture лишь у тех чанков,
+     * что пересекли порог _cfg.farTextureDistance с прошлого кадра.
+     * @note Только главный поток.
+     */
+    void updateChunkTextureLOD();
 
     // ========================================================================
     /** @name Приватные методы: управление потоками
@@ -921,7 +975,9 @@ private:
     ChunkKey _lastPlayerChunk{0, 0, 0};  ///< Кэшированный чанк игрока для детектирования перемещения
     ax::Vec3 _playerWorldPos{0, 0, 0};   ///< Мировая позиция игрока (для тумана)
 
-    ax::Texture2D* _terrainAtlas = nullptr;  ///< Кэшированная текстура-атлас тайлов (загружается один раз)
+    ax::Texture2D* _terrainAtlas = nullptr;  ///< Ближний атлас: чёткий (NEAREST), без анизотропии
+    ax::Texture2D* _terrainAtlasFar = nullptr;  ///< Дальний атлас: тот же пиксель + mip + anisotropy (отдельный GL-объект)
+    ax::Image*     _atlasImage = nullptr;  ///< Процедурный атлас в памяти (retained), если proceduralStoneAtlas
 
     ax::MeshMaterial* _waterMaterial = nullptr;  ///< Общий render-state-материал воды (lazy, retained)
 
